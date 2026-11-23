@@ -15,6 +15,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- The download is Songify.exe; release builds set Version from the git tag (v1.2.3 → 1.2.3). -->
+    <AssemblyName>Songify</AssemblyName>
+    <Product>Songify</Product>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
 </Project>

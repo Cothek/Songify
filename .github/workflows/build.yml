@@ -1,0 +1,74 @@
+# Builds and tests every push to main and every pull request. Pushing a version tag
+# (v1.2.3, or v1.2.3-beta.1 for a pre-release) also publishes a GitHub release with
+# Songify-win-x64.zip for download.
+# Actions are pinned to exact commits (this job builds the exe people download);
+# Dependabot keeps the pins current.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v[0-9]*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 8.0.x
+
+      # Integration tests (real YouTube downloads) stay off: they need SONGIFY_INTEGRATION=1.
+      - name: Test
+        run: dotnet test Songify.sln -c Release
+
+      - name: Publish Songify.exe
+        shell: pwsh
+        run: |
+          $versionArg = @()
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $versionArg = @("-p:Version=$($env:GITHUB_REF_NAME.TrimStart('v'))") }
+          dotnet publish src/Songify.App -p:PublishProfile=win-x64 @versionArg
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Compress-Archive -Path artifacts/publish/win-x64/Songify.exe -DestinationPath artifacts/Songify-win-x64.zip
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Songify-win-x64
+          path: artifacts/Songify-win-x64.zip
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Songify-win-x64
+
+      # Re-runnable: creates the release once, then (re)uploads the zip.
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then pre="--prerelease"; fi
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+                 --title "Songify $GITHUB_REF_NAME" --generate-notes $pre
+          gh release upload "$GITHUB_REF_NAME" Songify-win-x64.zip --repo "$GITHUB_REPOSITORY" --clobber

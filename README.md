@@ -10,13 +10,27 @@ For each video in a playlist it:
 
 Songify remembers every video it has processed, so a song is never downloaded twice and a restart resumes unfinished work.
 
-## Run
+## Download
+
+1. Open the [latest release](https://github.com/Cothek/Songify/releases/latest) and download **Songify-win-x64.zip** (Windows 10 or 11, 64-bit).
+2. Unzip it anywhere and run **Songify.exe**. Nothing else needs to be installed.
+3. Windows may say "Windows protected your PC", because the app isn't code-signed. Click **More info → Run anyway**.
+
+## Build from source
 
 Requires the .NET 8 SDK.
 
 ```powershell
 dotnet run --project src/Songify.App
 ```
+
+To build the same single-file `Songify.exe` as the download (into `artifacts\publish\win-x64`):
+
+```powershell
+dotnet publish src/Songify.App -p:PublishProfile=win-x64
+```
+
+## First start
 
 On first start Songify downloads its tools (about 150 MB) into `%LOCALAPPDATA%\Songify\tools`: [yt-dlp](https://github.com/yt-dlp/yt-dlp), [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) and [Deno](https://deno.com) (yt-dlp needs a JavaScript runtime for YouTube). yt-dlp updates itself once a day.
 
@@ -29,6 +43,17 @@ dotnet test
 ```
 
 The end-to-end test hits real YouTube and is skipped unless `SONGIFY_INTEGRATION=1`.
+
+## Releasing
+
+GitHub Actions (`.github/workflows/build.yml`) builds and tests every push to `main` and every pull request. To publish a download, push a version tag; the workflow attaches `Songify-win-x64.zip` to a GitHub release (re-running it replaces the zip):
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+A tag with a suffix, like `v0.2.0-beta.1`, is published as a pre-release, so the download link above keeps pointing at the latest stable version.
 
 ## Layout
 

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Debug info lives inside each DLL/exe, so a single-file publish has no loose .pdb files. -->
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+</Project>
