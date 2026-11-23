@@ -1,0 +1,348 @@
+﻿<ui:FluentWindow x:Class="Songify.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:local="clr-namespace:Songify.App"
+        xmlns:models="clr-namespace:Songify.Core.Models;assembly=Songify.Core"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance local:MainViewModel}"
+        Title="Songify" Width="1240" Height="780" MinWidth="900" MinHeight="560"
+        FontSize="{StaticResource FontBody}"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica" WindowCornerPreference="Round"
+        WindowStartupLocation="CenterScreen">
+
+    <Window.Resources>
+        <local:StatusLabelConverter x:Key="StatusLabel" />
+        <local:SourceLabelConverter x:Key="SourceLabel" />
+        <local:PercentConverter x:Key="Percent" />
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
+        <!-- Status pill: color plus a text label, never color alone -->
+        <DataTemplate x:Key="StatusCell" DataType="{x:Type models:TrackRecord}">
+            <Border x:Name="Pill" CornerRadius="{DynamicResource ControlCornerRadius}" Padding="8,2"
+                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                    Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                <TextBlock x:Name="Label" FontSize="{StaticResource FontSmall}" FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                    <TextBlock.Text>
+                        <MultiBinding Converter="{StaticResource StatusLabel}">
+                            <Binding Path="Status" />
+                            <Binding Path="NeedsReview" />
+                        </MultiBinding>
+                    </TextBlock.Text>
+                </TextBlock>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsInProgress}" Value="True">
+                    <Setter TargetName="Pill" Property="Background" Value="{DynamicResource SystemFillColorAttentionBackgroundBrush}" />
+                    <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="{x:Static models:TrackStatus.Done}">
+                    <Setter TargetName="Pill" Property="Background" Value="{DynamicResource SystemFillColorSuccessBackgroundBrush}" />
+                    <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+                </DataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding Status}" Value="{x:Static models:TrackStatus.Done}" />
+                        <Condition Binding="{Binding NeedsReview}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter TargetName="Pill" Property="Background" Value="{DynamicResource SystemFillColorCautionBackgroundBrush}" />
+                    <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}" />
+                </MultiDataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="{x:Static models:TrackStatus.Failed}">
+                    <Setter TargetName="Pill" Property="Background" Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}" />
+                    <Setter TargetName="Label" Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <Style x:Key="CellText" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+        </Style>
+        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+
+        <ContextMenu x:Key="TrackMenu">
+            <MenuItem Header="Try again" Command="{Binding RetrySelectedCommand}" />
+            <MenuItem Header="Show file in folder"
+                      Command="{Binding ShowInFolderCommand}"
+                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <Separator />
+            <MenuItem Header="Open the saved source"
+                      Command="{Binding OpenSavedSourceCommand}"
+                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <MenuItem Header="Open the playlist video"
+                      Command="{Binding OpenOriginalVideoCommand}"
+                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+        </ContextMenu>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="340" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Grid.ColumnSpan="2" Title="Songify" />
+
+        <!-- Sidebar: playlists and output settings, on the window backdrop -->
+        <ScrollViewer Grid.Row="1" Grid.Column="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="16,4,16,16">
+                <TextBlock Text="YouTube playlists" Style="{StaticResource SectionHeading}" />
+                <TextBlock Text="Playlist link" Style="{StaticResource FieldLabel}" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ui:TextBox x:Name="PlaylistInput" PlaceholderText="https://www.youtube.com/playlist?list=…"
+                                Text="{Binding NewPlaylistUrl, UpdateSourceTrigger=PropertyChanged}"
+                                AutomationProperties.Name="Playlist link">
+                        <ui:TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding AddPlaylistCommand}" />
+                        </ui:TextBox.InputBindings>
+                    </ui:TextBox>
+                    <ui:Button Grid.Column="1" Content="Add" Margin="8,0,0,0" Appearance="Primary"
+                               VerticalAlignment="Stretch" Command="{Binding AddPlaylistCommand}" />
+                </Grid>
+                <TextBlock Text="{Binding PlaylistError}" Style="{StaticResource FieldError}" />
+
+                <TextBlock Text="No playlists yet. Public and unlisted playlists work."
+                           Style="{StaticResource Hint}"
+                           Visibility="{Binding HasNoPlaylists, Converter={StaticResource BoolToVisibility}}" />
+                <ItemsControl ItemsSource="{Binding Playlists}" Margin="0,8,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding}" Style="{StaticResource CellMuted}"
+                                           FontSize="{StaticResource FontSmall}" />
+                                <ui:Button Grid.Column="1" Content="Remove" Appearance="Transparent"
+                                           Padding="8,3" FontSize="{StaticResource FontSmall}"
+                                           AutomationProperties.Name="Remove playlist"
+                                           Command="{Binding DataContext.RemovePlaylistCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                           CommandParameter="{Binding}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <CheckBox Content="Check every" IsChecked="{Binding MonitoringEnabled}" MinWidth="0" />
+                    <ComboBox Margin="4,0,0,0" MinWidth="110" VerticalAlignment="Center"
+                              ItemsSource="{Binding PollIntervals}" SelectedItem="{Binding PollIntervalMinutes}"
+                              IsEnabled="{Binding MonitoringEnabled}"
+                              AutomationProperties.Name="Check interval in minutes">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding StringFormat={}{0} min}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+
+                <TextBlock Text="Saving" Style="{StaticResource SectionHeading}" Margin="0,24,0,8" />
+
+                <TextBlock Text="Save to folder" Style="{StaticResource FieldLabel}" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ui:TextBox Text="{Binding OutputFolder}" AutomationProperties.Name="Save to folder" />
+                    <ui:Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" VerticalAlignment="Stretch"
+                               Command="{Binding BrowseFolderCommand}" />
+                </Grid>
+                <TextBlock Text="{Binding OutputFolderError}" Style="{StaticResource FieldError}" />
+
+                <TextBlock Text="Format" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
+                <ComboBox ItemsSource="{Binding Formats}" DisplayMemberPath="Label"
+                          SelectedValuePath="Value" SelectedValue="{Binding SelectedFormat}"
+                          AutomationProperties.Name="Format" AutomationProperties.HelpText="{Binding FormatHint}" />
+
+                <TextBlock Text="Bitrate" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
+                <!-- Fixed height so swapping the box for the note doesn't move the fields below -->
+                <Grid MinHeight="34">
+                    <ComboBox ItemsSource="{Binding Bitrates}" SelectedItem="{Binding Bitrate}"
+                              Visibility="{Binding ShowBitrate, Converter={StaticResource BoolToVisibility}}"
+                              AutomationProperties.Name="Bitrate">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding StringFormat={}{0} kbps}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <!-- Shown instead of the box when the format has no bitrate to pick -->
+                    <TextBlock Text="{Binding BitrateNote}" Style="{StaticResource HideWhenEmpty}" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                </Grid>
+                <TextBlock Style="{StaticResource Hint}" Text="{Binding FormatHint}" />
+
+                <TextBlock Text="File name" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
+                <ui:TextBox Text="{Binding FileNameTemplate}" AutomationProperties.Name="File name pattern" />
+                <TextBlock Style="{StaticResource Hint}" Text="Use {artist}, {title}, {album}, {year} or {id}." />
+
+                <CheckBox Margin="0,16,0,0" IsChecked="{Binding AllowVideoFallback}">
+                    <TextBlock TextWrapping="Wrap"
+                               Text="If there's no album version, save the video's audio (flagged for you to check)" />
+                </CheckBox>
+
+                <TextBlock Text="Appearance" Style="{StaticResource SectionHeading}" Margin="0,24,0,8" />
+                <TextBlock Text="Theme" Style="{StaticResource FieldLabel}" />
+                <ComboBox ItemsSource="{Binding ThemeOptions}" DisplayMemberPath="Label"
+                          SelectedValuePath="Value" SelectedValue="{Binding Theme}"
+                          AutomationProperties.Name="Theme" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Main: track list on a raised layer -->
+        <Border Grid.Row="1" Grid.Column="1" Background="{DynamicResource LayerFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,0,0"
+                CornerRadius="8,0,0,0">
+            <Grid Margin="16,16,16,8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.All}}"
+                                     Content="{Binding TotalCount}" ContentStringFormat="All {0}" />
+                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Review}}"
+                                     Content="{Binding ReviewCount}" ContentStringFormat="To check {0}" />
+                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Failed}}"
+                                     Content="{Binding FailedCount}" ContentStringFormat="Failed {0}" />
+                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Pending}}"
+                                     Content="{Binding PendingCount}" ContentStringFormat="In progress {0}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <ui:Button Content="Check playlists now" Margin="0,0,8,0" Command="{Binding CheckNowCommand}" />
+                        <ui:Button Content="Try again" Command="{Binding RetrySelectedCommand}"
+                                   ToolTip="Process the selected failed songs again" />
+                        <ui:Button Content="Open save folder" Margin="8,0,0,0" Command="{Binding OpenOutputFolderCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <DataGrid x:Name="TrackGrid" Grid.Row="1" ItemsSource="{Binding TracksView}"
+                          AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                          SelectionMode="Extended" SelectionUnit="FullRow" HeadersVisibility="Column"
+                          Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          GotKeyboardFocus="TrackGrid_GotKeyboardFocus"
+                          EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                          ContextMenu="{StaticResource TrackMenu}"
+                          SelectionChanged="TrackGrid_SelectionChanged"
+                          AutomationProperties.Name="Songs">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow" BasedOn="{StaticResource DefaultDataGridRowStyle}">
+                            <Setter Property="ToolTip" Value="{Binding OriginalTitle}" />
+                            <Setter Property="BorderThickness" Value="2" />
+                            <Style.Triggers>
+                                <!-- The grid draws no cell focus visual, so show keyboard focus on the row -->
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource FocusStrokeColorOuterBrush}" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="Status" Width="130" CellTemplate="{StaticResource StatusCell}"
+                                                SortMemberPath="Status" />
+                        <DataGridTemplateColumn Header="Song" Width="2*" SortMemberPath="DisplayTitle">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding DisplayTitle}" Style="{StaticResource CellText}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Artist" Width="1.3*" SortMemberPath="Artist">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Artist}" Style="{StaticResource CellText}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Album" Width="1.2*" SortMemberPath="Album">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Album}" Style="{StaticResource CellMuted}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Source" Width="120" SortMemberPath="Source">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Source, Converter={StaticResource SourceLabel}}" Style="{StaticResource CellMuted}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Quality" Width="1.1*" SortMemberPath="Quality">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Quality}" Style="{StaticResource CellMuted}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Match" Width="72" SortMemberPath="MatchScore">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding MatchScore, Converter={StaticResource Percent}}" Style="{StaticResource CellMuted}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Note" Width="2*">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Note}" Style="{StaticResource CellMuted}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <TextBlock Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" MaxWidth="360"
+                           IsHitTestVisible="False"
+                           Visibility="{Binding HasNoTracks, Converter={StaticResource BoolToVisibility}}"
+                           Text="Songs from your playlists show up here. Add a playlist link on the left to start." />
+
+                <!-- Activity log -->
+                <Expander Grid.Row="2" Header="Activity log" Margin="0,8,0,0">
+                    <ListBox ItemsSource="{Binding LogLines}" Height="160"
+                             FontFamily="Consolas" FontSize="{StaticResource FontSmall}"
+                             VirtualizingPanel.IsVirtualizing="True" AutomationProperties.Name="Activity log" />
+                </Expander>
+            </Grid>
+        </Border>
+
+        <!-- Status bar -->
+        <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="16,6">
+            <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       FontSize="{StaticResource FontSmall}" />
+            <TextBlock Text="{Binding SavedCount, StringFormat={}   {0} saved}"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="{StaticResource FontSmall}" />
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>
