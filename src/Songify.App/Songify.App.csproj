@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Songify.Core\Songify.Core.csproj" />
+    <ProjectReference Include="..\Songify.Spotify\Songify.Spotify.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -11,7 +12,9 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- 10.0.19041 (Windows 10 2004): needed by the Spotify recorder's per-app audio capture -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

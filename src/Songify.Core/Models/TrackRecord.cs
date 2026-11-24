@@ -10,6 +10,9 @@ public enum TrackStatus
     Matching,
     Downloading,
     Encoding,
+    /// <summary>Queued for a Spotify recording (one at a time, maybe waiting until the PC is idle).</summary>
+    WaitingToRecord,
+    Recording,
     Done,
     Failed,
 }
@@ -21,6 +24,8 @@ public enum TrackSource
     YouTubeMusic,
     /// <summary>Audio taken from the YouTube video itself (may include music-video extras).</summary>
     YouTubeVideo,
+    /// <summary>Recorded from the Spotify desktop app while it played the song.</summary>
+    Spotify,
 }
 
 /// <summary>
@@ -47,6 +52,7 @@ public sealed class TrackRecord : INotifyPropertyChanged
     public string? Artist { get => _artist; set => Set(ref _artist, value); }
     public string? Title { get => _title; set => Set(ref _title, value); }
     public string? Album { get => _album; set => Set(ref _album, value); }
+    /// <summary>ID of what was saved: a YouTube video ID, or the Spotify track ID for <see cref="TrackSource.Spotify"/>.</summary>
     public string? MatchedVideoId { get => _matchedVideoId; set => Set(ref _matchedVideoId, value); }
     public double? MatchScore { get => _matchScore; set => Set(ref _matchScore, value); }
 
@@ -60,7 +66,8 @@ public sealed class TrackRecord : INotifyPropertyChanged
     public string? Quality { get => _quality; set => Set(ref _quality, value); }
 
     [JsonIgnore]
-    public bool IsInProgress => Status is TrackStatus.Matching or TrackStatus.Downloading or TrackStatus.Encoding;
+    public bool IsInProgress => Status is TrackStatus.Matching or TrackStatus.Downloading or TrackStatus.Encoding
+        or TrackStatus.WaitingToRecord or TrackStatus.Recording;
 
     /// <summary>Waiting or being worked on.</summary>
     [JsonIgnore]

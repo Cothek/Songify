@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using Songify.Core.Audio;
 using Songify.Core.Infrastructure;
 using Songify.Core.Models;
+using Songify.Core.Spotify;
 using Songify.Core.Tools;
 using Songify.Core.YouTube;
 
@@ -30,6 +31,7 @@ public sealed class SongifyService : IAsyncDisposable
     private readonly Dictionary<string, TrackRecord> _byId;
     private readonly HashSet<string> _enqueued = [];
     private readonly Channel<TrackRecord> _queue = Channel.CreateUnbounded<TrackRecord>();
+    private readonly Channel<SpotifyJob> _recordings = Channel.CreateUnbounded<SpotifyJob>(); // one recorder
     private readonly SemaphoreSlim _pollSignal = new(0);
     private readonly CancellationTokenSource _cts = new();
     private readonly Timer _saveTimer;
@@ -45,7 +47,8 @@ public sealed class SongifyService : IAsyncDisposable
     public AppSettings Settings => _settings;
     public bool ToolsReady { get; private set; }
 
-    public SongifyService(AppPaths paths)
+    /// <param name="spotifyRecorder">Null where Spotify recording isn't available; the setting then has no effect.</param>
+    public SongifyService(AppPaths paths, ISpotifyRecorder? spotifyRecorder = null)
     {
         _paths = paths;
         _paths.EnsureCreated();
@@ -54,9 +57,11 @@ public sealed class SongifyService : IAsyncDisposable
         _http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36");
+        spotifyRecorder?.RecoverFromCrash(); // after logging is set up
         _tools = new ToolManager(paths.ToolsDir, _http);
         _ytDlp = new YtDlpClient(_tools);
-        _processor = new TrackProcessor(_ytDlp, new YouTubeMusicClient(_http), new AudioEncoder(_tools), _http, paths.WorkDir);
+        _processor = new TrackProcessor(_ytDlp, new YouTubeMusicClient(_http), new SpotifyTrackResolver(_http), spotifyRecorder,
+            new AudioEncoder(_tools), _http, paths.WorkDir);
 
         _settings = (JsonFile.Load<AppSettings>(paths.SettingsFile) ?? new AppSettings()).Sanitize();
         _tracks = (JsonFile.Load<List<TrackRecord>>(paths.LibraryFile) ?? [])
@@ -102,6 +107,7 @@ public sealed class SongifyService : IAsyncDisposable
             if (_disposed) return;
             for (var i = 0; i < Math.Max(1, _settings.MaxParallelDownloads); i++)
                 _running.Add(Task.Run(() => WorkerAsync(ct)));
+            _running.Add(Task.Run(() => RecorderAsync(ct)));
             _running.Add(Task.Run(() => MonitorAsync(ct)));
         }
         foreach (var track in GetTracks().Where(t => t.Status == TrackStatus.Queued))
@@ -249,24 +255,58 @@ public sealed class SongifyService : IAsyncDisposable
             {
                 lock (_gate) _enqueued.Remove(track.VideoId);
                 if (!track.TryClaim()) continue; // already handled or no longer queued
-                try
-                {
-                    await _processor.ProcessAsync(track, _settings, ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    track.Status = TrackStatus.Queued; // resume next launch
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    track.Note = ex.Message;
-                    track.Status = TrackStatus.Failed;
-                    AppLog.Error($"Failed: {track.OriginalTitle}", ex);
-                }
+                var job = await RunAsync(track, () => _processor.ProcessAsync(track, _settings, ct), ct);
+                if (job is not null) _recordings.Writer.TryWrite(job);
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    /// <summary>Spotify recordings play in real time through one app, so they run one at a time here.</summary>
+    private async Task RecorderAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var job in _recordings.Reader.ReadAllAsync(ct))
+            {
+                var retryAt = await RunAsync(job.Track, () => _processor.RecordAsync(job, () => _settings, ct), ct);
+                if (retryAt is { } at) _ = RequeueAtAsync(job, at, ct);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>Puts a job back in the recording queue later; on exit the track restarts from Queued next launch.</summary>
+    private async Task RequeueAtAsync(SpotifyJob job, DateTimeOffset at, CancellationToken ct)
+    {
+        try
+        {
+            var wait = at - DateTimeOffset.Now;
+            if (wait > TimeSpan.Zero) await Task.Delay(wait, ct);
+            _recordings.Writer.TryWrite(job);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>Runs one track's work; a failure marks only that track failed. Rethrows cancellation on shutdown.</summary>
+    private static async Task<T?> RunAsync<T>(TrackRecord track, Func<Task<T>> work, CancellationToken ct)
+    {
+        try
+        {
+            return await work();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            track.Status = TrackStatus.Queued; // resume next launch
+            throw;
+        }
+        catch (Exception ex)
+        {
+            track.Note = ex.Message;
+            track.Status = TrackStatus.Failed;
+            AppLog.Error($"Failed: {track.OriginalTitle}", ex);
+            return default;
+        }
     }
 
     private void ClearWorkDir()

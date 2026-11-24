@@ -3,6 +3,7 @@ using System.Text;
 using System.Windows;
 using Songify.Core.Infrastructure;
 using Songify.Core.Processing;
+using Songify.Spotify;
 
 namespace Songify.App;
 
@@ -45,7 +46,7 @@ public partial class App : Application
 
         try
         {
-            _service = new SongifyService(paths);
+            _service = new SongifyService(paths, new SpotifyRecorder(paths.LocalDir));
             _themes = new ThemeSwitcher();
             _themes.Apply(_service.Settings.Theme); // before the window exists, so it never flashes the wrong theme
             var window = new MainWindow(new MainViewModel(_service, _themes, Dispatcher));

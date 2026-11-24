@@ -2,18 +2,43 @@ using Songify.Core.Audio;
 using Songify.Core.Infrastructure;
 using Songify.Core.Matching;
 using Songify.Core.Models;
+using Songify.Core.Spotify;
 using Songify.Core.YouTube;
 
 namespace Songify.Core.Processing;
 
+/// <summary>A track waiting for the Spotify recorder, with what to save if recording fails.</summary>
+public sealed class SpotifyJob
+{
+    internal SpotifyJob(TrackRecord track, TrackProcessor.SourcePlan plan, SpotifyMatch match, ParsedTitle parsed, string fallbackNote)
+    {
+        Track = track;
+        Plan = plan;
+        Match = match;
+        Parsed = parsed;
+        FallbackNote = fallbackNote;
+    }
+
+    public TrackRecord Track { get; }
+    public SpotifyMatch Match { get; }
+    internal TrackProcessor.SourcePlan Plan { get; }
+    internal ParsedTitle Parsed { get; }
+    /// <summary>Why YouTube Music had no album version; shown if the video's audio is saved instead.</summary>
+    internal string FallbackNote { get; }
+    /// <summary>Times Spotify didn't play the song so far.</summary>
+    internal int DidNotPlayCount { get; set; }
+}
+
 /// <summary>
 /// Turns one playlist video into an audio file:
-/// 1) find the official album track on YouTube Music, 2) otherwise use the video's own audio,
-/// then download, encode to the chosen format, tag, and save.
+/// 1) find the official album track on YouTube Music, 2) optionally record it from the Spotify app,
+/// 3) otherwise use the video's own audio; then download, encode to the chosen format, tag, and save.
 /// </summary>
 public sealed class TrackProcessor(
     YtDlpClient ytDlp,
     YouTubeMusicClient youTubeMusic,
+    SpotifyTrackResolver spotifyResolver,
+    ISpotifyRecorder? spotifyRecorder,
     AudioEncoder encoder,
     HttpClient http,
     string workRoot)
@@ -21,56 +46,150 @@ public sealed class TrackProcessor(
     /// <summary>Matches at or above this are trusted; below it (but above the minimum) get flagged for review.</summary>
     private const double ConfidentScore = 0.85;
 
+    /// <summary>Spotify Free has an unpublished daily limit on picking songs; wait it out a few times before giving up.</summary>
+    internal const int DidNotPlayAttempts = 3;
+    internal static readonly TimeSpan DidNotPlayRetryDelay = TimeSpan.FromHours(1);
+
     private static readonly object OutputLock = new();
 
-    /// <summary>Processes a track the caller has already claimed (Status = Matching).</summary>
-    public async Task ProcessAsync(TrackRecord track, AppSettings settings, CancellationToken ct)
+    /// <summary>
+    /// Processes a track the caller has already claimed (Status = Matching). Returns a job for
+    /// <see cref="RecordAsync"/> when the song should be recorded from Spotify; otherwise the track is finished.
+    /// </summary>
+    public async Task<SpotifyJob?> ProcessAsync(TrackRecord track, AppSettings settings, CancellationToken ct)
     {
-        var work = Path.Combine(workRoot, track.VideoId);
+        var choice = await ChooseSourceAsync(track, settings, ct);
+        if (choice is SpotifyJob job)
+        {
+            track.Status = TrackStatus.WaitingToRecord;
+            return job;
+        }
+        if (choice is SourcePlan plan)
+            await InWorkDirAsync(track.VideoId, work => DownloadAndSaveAsync(track, plan, work, settings, ct));
+        return null;
+    }
+
+    /// <summary>
+    /// Records a <see cref="SpotifyJob"/> and saves it. Run one at a time: it plays the song in real time.
+    /// Falls back to the video's audio if Spotify can't play or record the song. Returns when to try again
+    /// if Spotify played something else (e.g. the Free daily limit); the caller re-queues the job then, so one
+    /// such song doesn't hold up the others. <paramref name="settings"/> is read live: a job may wait for days.
+    /// </summary>
+    public async Task<DateTimeOffset?> RecordAsync(SpotifyJob job, Func<AppSettings> settings, CancellationToken ct)
+    {
+        var track = job.Track;
+        if (!settings().RecordFromSpotify || spotifyRecorder is null)
+        {
+            // Turned off while the job was waiting.
+            await SaveVideoFallbackAsync(job, job.FallbackNote, settings(), ct);
+            return null;
+        }
+
+        DateTimeOffset? retryAt = null;
+        await InWorkDirAsync("spotify-" + track.VideoId, async work =>
+        {
+            var options = new RecordingOptions(
+                () => settings() is { SpotifyOnlyWhenIdle: true } s ? TimeSpan.FromMinutes(s.SpotifyIdleMinutes) : null,
+                () => settings().RecordFromSpotify);
+            void OnPhase(RecordingPhase phase)
+            {
+                track.Status = phase == RecordingPhase.Recording ? TrackStatus.Recording : TrackStatus.WaitingToRecord;
+                track.Note = phase == RecordingPhase.WaitingForIdle
+                    ? $"Records once this PC has been idle for {settings().SpotifyIdleMinutes} min"
+                    : null;
+            }
+
+            string recording;
+            try
+            {
+                recording = await spotifyRecorder.RecordAsync(job.Match.Track, options, work, OnPhase, ct);
+            }
+            catch (SpotifyRecordingException ex) when (ex.Failure == SpotifyFailure.DidNotPlay && ++job.DidNotPlayCount < DidNotPlayAttempts)
+            {
+                retryAt = DateTimeOffset.Now + DidNotPlayRetryDelay;
+                track.Status = TrackStatus.WaitingToRecord;
+                track.Note = $"{ex.Message} Trying again at {retryAt:t}.";
+                AppLog.Warn($"{track.OriginalTitle}: {track.Note}");
+                return;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Any recorder failure (no sound device, capture error…) still leaves the video's audio.
+                var reason = ex is SpotifyRecordingException ? ex.Message : $"unexpected error ({ex.Message})";
+                AppLog.Warn($"Spotify recording failed for \"{track.OriginalTitle}\": {reason}");
+                await SaveVideoFallbackAsync(job, $"{job.FallbackNote}. Spotify recording failed: {reason.TrimEnd('.')}", settings(), ct);
+                return;
+            }
+
+            var current = settings();
+            var output = AudioEncoder.PlanRecordingOutput(current.Format, current.BitrateKbps);
+            await SaveAsync(track, job.Plan, recording, output, job.Plan.Tags, work, current, ct);
+        });
+        return retryAt;
+    }
+
+    private async Task SaveVideoFallbackAsync(SpotifyJob job, string note, AppSettings settings, CancellationToken ct)
+    {
+        if (VideoPlan(job.Track, job.Parsed, note, settings) is { } plan)
+            await InWorkDirAsync(job.Track.VideoId, work => DownloadAndSaveAsync(job.Track, plan, work, settings, ct));
+    }
+
+    /// <summary>Runs <paramref name="action"/> in a fresh temp folder that is deleted afterwards.</summary>
+    private async Task InWorkDirAsync(string name, Func<string, Task> action)
+    {
+        var work = Path.Combine(workRoot, name);
         Directory.CreateDirectory(work);
         try
         {
-            var plan = await ChooseSourceAsync(track, settings, ct);
-            if (plan is null) return;
-
-            track.Status = TrackStatus.Downloading;
-            var audio = await ytDlp.DownloadAudioAsync(plan.VideoId, plan.Source == TrackSource.YouTubeMusic, work, ct);
-            var output = AudioEncoder.PlanOutput(settings.Format, settings.BitrateKbps, audio.Codec, audio.BitrateKbps);
-            var cover = output.Cover != CoverEmbedding.None ? await TryDownloadCoverAsync(plan.CoverUrls, work, ct) : null;
-            var tags = WithDownloadedTags(plan.Tags, plan.Source, audio);
-
-            track.Status = TrackStatus.Encoding;
-            var extension = output.Extension;
-            var encoded = Path.Combine(work, "encoded" + extension);
-            await encoder.EncodeAsync(audio.Path, encoded, output, tags, cover, work, ct);
-
-            Directory.CreateDirectory(settings.OutputFolder);
-            var baseName = FileNamer.BuildBaseName(settings.FileNameTemplate, tags, plan.VideoId);
-            string finalPath;
-            lock (OutputLock) // two workers may produce the same name at once
-            {
-                finalPath = FileNamer.UniquePath(settings.OutputFolder, baseName, extension);
-                File.Move(encoded, finalPath);
-            }
-
-            track.Source = plan.Source;
-            track.MatchedVideoId = plan.VideoId;
-            track.Artist = tags.Artist;
-            track.Title = tags.Title;
-            track.Album = tags.Album;
-            track.MatchScore = plan.Score;
-            track.NeedsReview = plan.NeedsReview;
-            track.Note = plan.Note;
-            track.FilePath = finalPath;
-            track.Quality = output.Quality;
-            track.Status = TrackStatus.Done;
-            AppLog.Info($"Saved {Path.GetFileName(finalPath)} ({plan.Source})");
+            await action(work);
         }
         finally
         {
             try { Directory.Delete(work, recursive: true); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    private async Task DownloadAndSaveAsync(TrackRecord track, SourcePlan plan, string work, AppSettings settings, CancellationToken ct)
+    {
+        track.Status = TrackStatus.Downloading;
+        var audio = await ytDlp.DownloadAudioAsync(plan.Id, plan.Source == TrackSource.YouTubeMusic, work, ct);
+        var output = AudioEncoder.PlanOutput(settings.Format, settings.BitrateKbps, audio.Codec, audio.BitrateKbps);
+        await SaveAsync(track, plan, audio.Path, output, WithDownloadedTags(plan.Tags, plan.Source, audio), work, settings, ct);
+    }
+
+    private async Task SaveAsync(
+        TrackRecord track, SourcePlan plan, string input, OutputPlan output, TrackTags tags, string work,
+        AppSettings settings, CancellationToken ct)
+    {
+        var cover = output.Cover != CoverEmbedding.None ? await TryDownloadCoverAsync(plan.CoverUrls, work, ct) : null;
+
+        track.Status = TrackStatus.Encoding;
+        var extension = output.Extension;
+        var encoded = Path.Combine(work, "encoded" + extension);
+        await encoder.EncodeAsync(input, encoded, output, tags, cover, work, ct);
+
+        Directory.CreateDirectory(settings.OutputFolder);
+        var baseName = FileNamer.BuildBaseName(settings.FileNameTemplate, tags, plan.Id);
+        string finalPath;
+        lock (OutputLock) // two workers may produce the same name at once
+        {
+            finalPath = FileNamer.UniquePath(settings.OutputFolder, baseName, extension);
+            File.Move(encoded, finalPath);
+        }
+
+        track.Source = plan.Source;
+        track.MatchedVideoId = plan.Id;
+        track.Artist = tags.Artist;
+        track.Title = tags.Title;
+        track.Album = tags.Album;
+        track.MatchScore = plan.Score;
+        track.NeedsReview = plan.NeedsReview;
+        track.Note = plan.Note;
+        track.FilePath = finalPath;
+        track.Quality = output.Quality;
+        track.Status = TrackStatus.Done;
+        AppLog.Info($"Saved {Path.GetFileName(finalPath)} ({plan.Source})");
     }
 
     /// <summary>
@@ -83,11 +202,13 @@ public sealed class TrackProcessor(
             ? planned with { Album = audio.Album ?? planned.Album, Year = audio.ReleaseYear ?? planned.Year }
             : planned;
 
-    private sealed record SourcePlan(
-        TrackSource Source, string VideoId, TrackTags Tags, IReadOnlyList<string> CoverUrls,
+    /// <param name="Id">YouTube video ID to download, or the Spotify track ID for a recording.</param>
+    internal sealed record SourcePlan(
+        TrackSource Source, string Id, TrackTags Tags, IReadOnlyList<string> CoverUrls,
         double? Score, bool NeedsReview, string? Note);
 
-    private async Task<SourcePlan?> ChooseSourceAsync(TrackRecord track, AppSettings settings, CancellationToken ct)
+    /// <summary>A <see cref="SourcePlan"/>, a <see cref="SpotifyJob"/>, or null when the track failed.</summary>
+    private async Task<object?> ChooseSourceAsync(TrackRecord track, AppSettings settings, CancellationToken ct)
     {
         var parsed = TitleParser.Parse(track.OriginalTitle, track.Channel);
 
@@ -115,18 +236,34 @@ public sealed class TrackProcessor(
             return MusicPlan(best.Track, best.Score, !confident, confident ? null : "Lower-confidence match; check it's the right song");
         }
 
-        var note = best is null
-            ? "No YouTube Music results"
-            : $"No confident YouTube Music match (best {best.Score:0.00}: {best.Track.Artists} - {best.Track.Title})";
-        var videoTags = new TrackTags(parsed.Title, parsed.Artist, null, parsed.Artist, YouTubeUrls.Video(track.VideoId));
-        var thumbnails = YouTubeUrls.Thumbnails(track.VideoId);
-
         if (track.Channel?.EndsWith(" - Topic", StringComparison.OrdinalIgnoreCase) == true)
         {
             // Album audio even though search didn't return it.
-            return new SourcePlan(TrackSource.YouTubeMusic, track.VideoId, videoTags, thumbnails, null, false, null);
+            return new SourcePlan(TrackSource.YouTubeMusic, track.VideoId, VideoTags(track, parsed),
+                YouTubeUrls.Thumbnails(track.VideoId), null, false, null);
         }
 
+        var note = best is null
+            ? "No YouTube Music results"
+            : $"No confident YouTube Music match (best {best.Score:0.00}: {best.Track.Artists} - {best.Track.Title})";
+
+        if (settings.RecordFromSpotify && spotifyRecorder is not null)
+        {
+            var match = await spotifyResolver.FindAsync(parsed, track.DurationSeconds, settings.MinMatchScore, ct);
+            if (match is not null)
+            {
+                AppLog.Info($"Found \"{track.OriginalTitle}\" on Spotify → {match.Track.Artist} - {match.Track.Title} ({match.Score:0.00}); queued to record");
+                return new SpotifyJob(track, SpotifyPlan(match), match, parsed, note);
+            }
+            note += ". Not found on Spotify";
+        }
+
+        return VideoPlan(track, parsed, note, settings);
+    }
+
+    /// <summary>The video's own audio, or null (track marked failed) when that fallback is turned off.</summary>
+    private static SourcePlan? VideoPlan(TrackRecord track, ParsedTitle parsed, string note, AppSettings settings)
+    {
         if (!settings.AllowVideoFallback)
         {
             track.Note = note + ". Saving the video's audio is turned off.";
@@ -137,9 +274,12 @@ public sealed class TrackProcessor(
 
         AppLog.Info($"Using video audio for \"{track.OriginalTitle}\": {note}");
         // No score: the rejected candidate's score would read as a score for the saved video audio.
-        return new SourcePlan(TrackSource.YouTubeVideo, track.VideoId, videoTags, thumbnails, null, true,
-            note + ". Used the video's audio; it may include music-video extras.");
+        return new SourcePlan(TrackSource.YouTubeVideo, track.VideoId, VideoTags(track, parsed), YouTubeUrls.Thumbnails(track.VideoId),
+            null, true, note + ". Used the video's audio; it may include music-video extras.");
     }
+
+    private static TrackTags VideoTags(TrackRecord track, ParsedTitle parsed) =>
+        new(parsed.Title, parsed.Artist, null, parsed.Artist, YouTubeUrls.Video(track.VideoId));
 
     private static SourcePlan MusicPlan(MusicTrack match, double score, bool needsReview, string? note)
     {
@@ -148,6 +288,15 @@ public sealed class TrackProcessor(
         if (match.ThumbnailUrl is not null) covers.Add(match.ThumbnailUrl);
         covers.AddRange(YouTubeUrls.Thumbnails(match.VideoId));
         return new SourcePlan(TrackSource.YouTubeMusic, match.VideoId, tags, covers, score, needsReview, note);
+    }
+
+    private static SourcePlan SpotifyPlan(SpotifyMatch match)
+    {
+        var t = match.Track;
+        var tags = new TrackTags(t.Title, t.Artist, t.Album, t.Artist, SpotifyTrack.Url(t.Id), t.Year);
+        var confident = match.Score >= ConfidentScore;
+        return new SourcePlan(TrackSource.Spotify, t.Id, tags, t.CoverUrl is null ? [] : [t.CoverUrl], match.Score,
+            !confident, confident ? null : "Lower-confidence Spotify match; check it's the right song");
     }
 
     /// <summary>Cover art is nice-to-have: any failure just means no cover.</summary>

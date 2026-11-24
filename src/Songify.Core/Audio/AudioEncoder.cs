@@ -52,6 +52,18 @@ public sealed class AudioEncoder(ToolManager tools)
         };
     }
 
+    /// <summary>Spotify Free streams Ogg Vorbis at 160 kbps; "Original" saves recordings at that quality.</summary>
+    public const int SpotifyFreeKbps = 160;
+
+    /// <summary>
+    /// For a Spotify recording (uncompressed): there is no stream to copy, so <see cref="AudioFormat.Original"/>
+    /// becomes Vorbis at Spotify Free's own bitrate.
+    /// </summary>
+    public static OutputPlan PlanRecordingOutput(AudioFormat format, int bitrateKbps) =>
+        format == AudioFormat.Original
+            ? PlanOutput(AudioFormat.Vorbis, SpotifyFreeKbps, null, null) with { Quality = $"Vorbis {SpotifyFreeKbps} kbps (Spotify's quality)" }
+            : PlanOutput(format, bitrateKbps, null, null);
+
     /// <summary>Keeps the source stream; picks the container that natively holds its codec.</summary>
     private static OutputPlan PlanCopy(string? codec, double? kbps)
     {

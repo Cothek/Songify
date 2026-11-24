@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Songify.Core.Infrastructure;
 using Songify.Core.Tools;
+using static Songify.Core.Infrastructure.JsonValues;
 
 namespace Songify.Core.YouTube;
 
@@ -114,13 +115,6 @@ public sealed class YtDlpClient(ToolManager tools)
             return null;
         }
     }
-
-    /// <summary>The string value, or null when missing, not a string, or blank.</summary>
-    private static string? Text(JsonNode node, string key) =>
-        node[key] is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s) ? s : null;
-
-    private static double? Number(JsonNode node, string key) =>
-        node[key] is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
 
     private async Task<ProcessResult> RunAsync(IEnumerable<string> args, CancellationToken ct)
     {

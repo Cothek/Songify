@@ -195,9 +195,31 @@
                 <ui:TextBox Text="{Binding FileNameTemplate}" AutomationProperties.Name="File name pattern" />
                 <TextBlock Style="{StaticResource Hint}" Text="Use {artist}, {title}, {album}, {year} or {id}." />
 
+                <!-- Fallbacks, in the order they're tried -->
+                <TextBlock Text="If YouTube Music has no album version" Style="{StaticResource SectionHeading}" Margin="0,24,0,8" />
+                <CheckBox IsChecked="{Binding RecordFromSpotify}">
+                    <TextBlock TextWrapping="Wrap" Text="Record it from the Spotify app" />
+                </CheckBox>
+                <TextBlock Style="{StaticResource Hint}"
+                           Text="Plays each song in the Spotify desktop app in real time and mutes your PC's sound while it records. Keep Spotify's own volume at 100%, and Crossfade and Automix off if your account has them. Recording breaks Spotify's terms and could get the account banned, so use a separate free account." />
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0" IsEnabled="{Binding RecordFromSpotify}">
+                    <CheckBox Content="Only when idle for" IsChecked="{Binding SpotifyOnlyWhenIdle}" MinWidth="0" />
+                    <ComboBox Margin="4,0,0,0" MinWidth="110" VerticalAlignment="Center"
+                              ItemsSource="{Binding IdleMinuteOptions}" SelectedItem="{Binding SpotifyIdleMinutes}"
+                              IsEnabled="{Binding SpotifyOnlyWhenIdle}"
+                              AutomationProperties.Name="Idle time in minutes before recording">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding StringFormat={}{0} min}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+                <TextBlock Style="{StaticResource Hint}"
+                           Text="Idle means no keyboard or mouse use and no other app playing sound. Touching the PC stops the recording; it's retried later." />
+
                 <CheckBox Margin="0,16,0,0" IsChecked="{Binding AllowVideoFallback}">
-                    <TextBlock TextWrapping="Wrap"
-                               Text="If there's no album version, save the video's audio (flagged for you to check)" />
+                    <TextBlock TextWrapping="Wrap" Text="Otherwise, save the video's audio (flagged for you to check)" />
                 </CheckBox>
 
                 <TextBlock Text="Appearance" Style="{StaticResource SectionHeading}" Margin="0,24,0,8" />

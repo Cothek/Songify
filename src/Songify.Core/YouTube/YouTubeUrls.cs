@@ -8,8 +8,13 @@ public static partial class YouTubeUrls
     public static string Video(string id) => $"https://www.youtube.com/watch?v={id}";
     public static string Music(string id) => $"https://music.youtube.com/watch?v={id}";
 
-    public static string For(TrackSource source, string id) =>
-        source == TrackSource.YouTubeMusic ? Music(id) : Video(id);
+    /// <summary>Web link for a saved track's <see cref="TrackRecord.MatchedVideoId"/>.</summary>
+    public static string For(TrackSource source, string id) => source switch
+    {
+        TrackSource.YouTubeMusic => Music(id),
+        TrackSource.Spotify => Spotify.SpotifyTrack.Url(id),
+        _ => Video(id),
+    };
 
     /// <summary>Thumbnail URLs to try, best first (maxres doesn't exist for every video).</summary>
     public static IReadOnlyList<string> Thumbnails(string id) =>

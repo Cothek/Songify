@@ -6,6 +6,7 @@ using System.Windows.Data;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Songify.Core.Audio;
 using Songify.Core.Infrastructure;
 using Songify.Core.Models;
 using Songify.Core.Processing;
@@ -40,6 +41,7 @@ public sealed partial class MainViewModel : ObservableObject
         [.. Enum.GetValues<AudioFormat>().OrderBy(f => f != AudioFormat.Original).Select(f => new Choice<AudioFormat>(f, f.DisplayName()))];
     public IReadOnlyList<int> Bitrates { get; } = AudioFormatInfo.Bitrates;
     public IReadOnlyList<int> PollIntervals { get; } = [5, 10, 15, 30, 60];
+    public IReadOnlyList<int> IdleMinuteOptions { get; } = [2, 5, 10, 15, 30];
     public IReadOnlyList<Choice<AppTheme>> ThemeOptions { get; } =
     [
         new(AppTheme.System, "Match Windows"),
@@ -59,6 +61,9 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _monitoringEnabled;
     [ObservableProperty] private int _pollIntervalMinutes;
     [ObservableProperty] private bool _allowVideoFallback;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(FormatHint))] private bool _recordFromSpotify;
+    [ObservableProperty] private bool _spotifyOnlyWhenIdle;
+    [ObservableProperty] private int _spotifyIdleMinutes;
     [ObservableProperty] private AppTheme _theme;
     [ObservableProperty] private string _statusText = "Starting…";
     [ObservableProperty] private TrackFilter _filter = TrackFilter.All;
@@ -82,6 +87,7 @@ public sealed partial class MainViewModel : ObservableObject
     public string FormatHint =>
         SelectedFormat == AudioFormat.Original
             ? "Keeps YouTube's audio exactly as downloaded (usually Opus, about 130–160 kbps), so there's no bitrate to pick: no quality loss and the smallest files. Some car stereos and iTunes can't play .opus files."
+              + (RecordFromSpotify ? $" Spotify recordings are saved as Ogg Vorbis {AudioEncoder.SpotifyFreeKbps} kbps, Spotify Free's own quality." : "")
         : SelectedFormat.IsLossless()
             ? "Lossless has no bitrate to pick. Files are 5–10 times larger and can't sound better than YouTube's audio."
             : "YouTube audio is about 130–160 kbps, so above 256 kbps mostly adds file size. Converting always loses a little quality; Original doesn't.";
@@ -103,6 +109,10 @@ public sealed partial class MainViewModel : ObservableObject
         MonitoringEnabled = s.MonitoringEnabled;
         PollIntervalMinutes = s.PollIntervalMinutes;
         AllowVideoFallback = s.AllowVideoFallback;
+        RecordFromSpotify = s.RecordFromSpotify;
+        SpotifyOnlyWhenIdle = s.SpotifyOnlyWhenIdle;
+        // A hand-edited value outside the list would leave the box blank: show the nearest choice.
+        SpotifyIdleMinutes = IdleMinuteOptions.MinBy(m => Math.Abs(m - s.SpotifyIdleMinutes));
         Theme = s.Theme;
         foreach (var url in s.Playlists) Playlists.Add(url);
         _loading = false;
@@ -187,6 +197,9 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnMonitoringEnabledChanged(bool value) => PushSettings();
     partial void OnPollIntervalMinutesChanged(int value) => PushSettings();
     partial void OnAllowVideoFallbackChanged(bool value) => PushSettings();
+    partial void OnRecordFromSpotifyChanged(bool value) => PushSettings();
+    partial void OnSpotifyOnlyWhenIdleChanged(bool value) => PushSettings();
+    partial void OnSpotifyIdleMinutesChanged(int value) => PushSettings();
 
     partial void OnThemeChanged(AppTheme value)
     {
@@ -217,6 +230,9 @@ public sealed partial class MainViewModel : ObservableObject
             s.MonitoringEnabled = MonitoringEnabled;
             s.PollIntervalMinutes = PollIntervalMinutes;
             s.AllowVideoFallback = AllowVideoFallback;
+            s.RecordFromSpotify = RecordFromSpotify;
+            s.SpotifyOnlyWhenIdle = SpotifyOnlyWhenIdle;
+            s.SpotifyIdleMinutes = SpotifyIdleMinutes;
             s.Theme = Theme;
             s.Playlists = [.. Playlists];
         });

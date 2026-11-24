@@ -17,6 +17,8 @@ public sealed class StatusLabelConverter : IMultiValueConverter
             TrackStatus.Matching => "Finding match",
             TrackStatus.Downloading => "Downloading",
             TrackStatus.Encoding => "Converting",
+            TrackStatus.WaitingToRecord => "Waiting to record",
+            TrackStatus.Recording => "Recording",
             TrackStatus.Done => review ? "Saved – check" : "Saved",
             TrackStatus.Failed => "Failed",
             _ => status.ToString(),
@@ -33,6 +35,7 @@ public sealed class SourceLabelConverter : IValueConverter
     {
         TrackSource.YouTubeMusic => "YouTube Music",
         TrackSource.YouTubeVideo => "Video audio",
+        TrackSource.Spotify => "Spotify recording",
         _ => "",
     };
 

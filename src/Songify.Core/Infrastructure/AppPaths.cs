@@ -3,6 +3,8 @@ namespace Songify.Core.Infrastructure;
 public sealed class AppPaths
 {
     public string DataDir { get; }
+    /// <summary>Machine-specific state: tools, temp files, the recorder's mute marker.</summary>
+    public string LocalDir { get; }
     public string ToolsDir { get; }
     public string WorkDir { get; }
     public string SettingsFile => Path.Combine(DataDir, "settings.json");
@@ -12,6 +14,7 @@ public sealed class AppPaths
     public AppPaths(string dataDir, string localDir)
     {
         DataDir = dataDir;
+        LocalDir = localDir;
         ToolsDir = Path.Combine(localDir, "tools");
         WorkDir = Path.Combine(localDir, "work");
     }
