@@ -18,7 +18,7 @@ Songify remembers every video it has processed, so a song is never downloaded tw
 
 ## Build from source
 
-Requires the .NET 8 SDK.
+Requires the .NET 10 SDK (use the `dotnet` command line or Visual Studio 2026; Visual Studio 2022 can't open .NET 10 projects).
 
 ```powershell
 dotnet run --project src/Songify.App

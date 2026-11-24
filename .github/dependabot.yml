@@ -5,3 +5,12 @@ updates:
     directory: /
     schedule:
       interval: monthly
+
+  # NuGet packages (one grouped PR for the test packages).
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      test-packages:
+        patterns: ["xunit*", "Microsoft.NET.Test.Sdk", "coverlet*"]
