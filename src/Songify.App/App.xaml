@@ -18,6 +18,8 @@
             <sys:Double x:Key="FontSmall">12</sys:Double>
             <sys:Double x:Key="FontBody">14</sys:Double>
 
+            <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+
             <Style x:Key="SectionHeading" TargetType="TextBlock">
                 <Setter Property="FontSize" Value="{StaticResource FontBody}" />
                 <Setter Property="FontWeight" Value="SemiBold" />
@@ -48,8 +50,9 @@
                 </Style.Triggers>
             </Style>
 
-            <!-- Inline validation message under a field -->
+            <!-- Inline validation message under a field; screen readers announce it when it appears -->
             <Style x:Key="FieldError" TargetType="TextBlock" BasedOn="{StaticResource HideWhenEmpty}">
+                <Setter Property="AutomationProperties.LiveSetting" Value="Assertive" />
                 <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
                 <Setter Property="FontSize" Value="{StaticResource FontSmall}" />
                 <Setter Property="TextWrapping" Value="Wrap" />

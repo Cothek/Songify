@@ -45,7 +45,8 @@ public sealed class SongifyService : IAsyncDisposable
     public event Action<string>? StatusChanged;
 
     public AppSettings Settings => _settings;
-    public bool ToolsReady { get; private set; }
+    private volatile bool _toolsReady; // set by StartAsync on a background thread, read from the UI
+    public bool ToolsReady { get => _toolsReady; private set => _toolsReady = value; }
 
     /// <param name="spotifyRecorder">Null where Spotify recording isn't available; the setting then has no effect.</param>
     public SongifyService(AppPaths paths, ISpotifyRecorder? spotifyRecorder = null)
@@ -148,6 +149,26 @@ public sealed class SongifyService : IAsyncDisposable
     public void Retry(TrackRecord track)
     {
         if (track.TryResetForRetry()) Enqueue(track);
+    }
+
+    /// <summary>Reads a saved song's tags from its file.</summary>
+    public Task<FileTags> ReadTagsAsync(TrackRecord track)
+    {
+        EnsureToolsReady();
+        return _processor.ReadSavedTagsAsync(track, _cts.Token);
+    }
+
+    /// <summary>Writes new tags into a saved song's file, renames it from the file name template, and marks it checked.</summary>
+    public Task EditAsync(TrackRecord track, TrackTags tags)
+    {
+        EnsureToolsReady();
+        return _processor.EditAsync(track, tags, _settings, _cts.Token);
+    }
+
+    private void EnsureToolsReady()
+    {
+        if (!ToolsReady)
+            throw new InvalidOperationException("Songify is still downloading the tools it needs. Try again in a minute.");
     }
 
     private void Enqueue(TrackRecord track)

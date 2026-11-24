@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Songify.Core.Infrastructure;
+using Songify.Core.Models;
 using Songify.Core.Tools;
 using static Songify.Core.Infrastructure.JsonValues;
 
@@ -107,7 +108,7 @@ public sealed class YtDlpClient(ToolManager tools)
             if (JsonNode.Parse(printedJson) is not JsonObject node) return null;
             var path = Text(node, "filepath");
             if (path is null) return null;
-            int? year = Number(node, "release_year") is double y && y is > 1000 and < 3000 ? (int)y : null;
+            var year = ReleaseYear.From(Number(node, "release_year"));
             return new DownloadedAudio(path, Text(node, "acodec"), Number(node, "abr"), Text(node, "album"), year);
         }
         catch (System.Text.Json.JsonException)

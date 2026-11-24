@@ -11,6 +11,12 @@ For each video in a playlist it:
 
 Songify remembers every video it has processed, so a song is never downloaded twice and a restart resumes unfinished work.
 
+## Checking and editing songs
+
+Songs saved from the video's audio or from a lower-confidence match are listed under **To check**. Double-click a saved song (or select it and press F2, or right-click → **Edit song…**) to fix its title, artist, album, album artist and year. Saving rewrites the file's tags without re-encoding the audio, keeps the cover art, renames the file from the **File name** pattern, and marks the song as checked. Close the song in your music player first: Songify can't change a file that's open, and leaves it untouched if it is. To clear the flag without editing, right-click → **Mark as checked** (works on several selected songs).
+
+Editing fixes names, not the recording: if the saved audio is the wrong version, editing won't change that.
+
 ## Spotify recording
 
 For songs YouTube Music doesn't have, Songify can record the album version from the Spotify desktop app (a Free account works). Without the Spotify API it finds the song through Deezer (for the recording's ISRC) and MusicBrainz (which links many ISRCs to Spotify), so many songs, especially less popular ones, can't be found and fall back to the video's audio.
@@ -56,7 +62,7 @@ Settings and the track library live in `%APPDATA%\Songify` (`settings.json`, `li
 dotnet test
 ```
 
-The end-to-end test hits real YouTube and is skipped unless `SONGIFY_INTEGRATION=1`.
+Tests that run the real tools (the end-to-end test against YouTube, and the ffmpeg encoding and song-editing tests) are skipped unless `SONGIFY_INTEGRATION=1`; the ffmpeg tests need the tools already downloaded by a first start.
 
 ## Releasing
 

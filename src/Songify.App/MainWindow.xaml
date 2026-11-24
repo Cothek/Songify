@@ -17,7 +17,6 @@
         <local:StatusLabelConverter x:Key="StatusLabel" />
         <local:SourceLabelConverter x:Key="SourceLabel" />
         <local:PercentConverter x:Key="Percent" />
-        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
 
         <!-- Status pill: color plus a text label, never color alone -->
         <DataTemplate x:Key="StatusCell" DataType="{x:Type models:TrackRecord}">
@@ -68,6 +67,10 @@
         </Style>
 
         <ContextMenu x:Key="TrackMenu">
+            <MenuItem Header="Edit song…" InputGestureText="F2"
+                      Command="{Binding EditSongCommand}"
+                      CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+            <MenuItem Header="Mark as checked" Command="{Binding MarkCheckedCommand}" />
             <MenuItem Header="Try again" Command="{Binding RetrySelectedCommand}" />
             <MenuItem Header="Show file in folder"
                       Command="{Binding ShowInFolderCommand}"
@@ -272,13 +275,14 @@
                           AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
                           SelectionMode="Extended" SelectionUnit="FullRow" HeadersVisibility="Column"
                           Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                          GotKeyboardFocus="TrackGrid_GotKeyboardFocus"
+                          GotKeyboardFocus="TrackGrid_GotKeyboardFocus" PreviewKeyDown="TrackGrid_PreviewKeyDown"
                           EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling"
                           ContextMenu="{StaticResource TrackMenu}"
                           SelectionChanged="TrackGrid_SelectionChanged"
                           AutomationProperties.Name="Songs">
                     <DataGrid.RowStyle>
                         <Style TargetType="DataGridRow" BasedOn="{StaticResource DefaultDataGridRowStyle}">
+                            <EventSetter Event="MouseDoubleClick" Handler="TrackRow_MouseDoubleClick" />
                             <Setter Property="ToolTip" Value="{Binding OriginalTitle}" />
                             <Setter Property="BorderThickness" Value="2" />
                             <Style.Triggers>

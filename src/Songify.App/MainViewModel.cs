@@ -72,7 +72,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _reviewCount;
     [ObservableProperty] private int _failedCount;
     [ObservableProperty] private int _pendingCount;
-    [ObservableProperty, NotifyCanExecuteChangedFor(nameof(RetrySelectedCommand))]
+    [ObservableProperty, NotifyCanExecuteChangedFor(nameof(RetrySelectedCommand), nameof(MarkCheckedCommand))]
     private IReadOnlyList<TrackRecord> _selectedTracks = [];
 
     public bool ShowBitrate => SelectedFormat.UsesBitrate();
@@ -158,6 +158,8 @@ public sealed partial class MainViewModel : ObservableObject
         RecountNow();
         if (Filter != TrackFilter.All) TracksView.Refresh();
         RetrySelectedCommand.NotifyCanExecuteChanged();
+        MarkCheckedCommand.NotifyCanExecuteChanged();
+        EditSongCommand.NotifyCanExecuteChanged();
     }
 
     private void RecountNow()
@@ -296,6 +298,25 @@ public sealed partial class MainViewModel : ObservableObject
     private void RetrySelected()
     {
         foreach (var track in SelectedTracks) _service.Retry(track);
+    }
+
+    /// <summary>Asks the window to show the "Edit song" dialog.</summary>
+    public event Action<EditSongViewModel>? EditRequested;
+
+    private static bool CanEditSong(TrackRecord? track) => track is { Status: TrackStatus.Done, FilePath: not null };
+
+    [RelayCommand(CanExecute = nameof(CanEditSong))]
+    private void EditSong(TrackRecord? track)
+    {
+        if (CanEditSong(track)) EditRequested?.Invoke(new EditSongViewModel(_service, track!));
+    }
+
+    private bool CanMarkChecked() => SelectedTracks.Any(t => Matches(t, TrackFilter.Review));
+
+    [RelayCommand(CanExecute = nameof(CanMarkChecked))]
+    private void MarkChecked()
+    {
+        foreach (var track in SelectedTracks.Where(t => Matches(t, TrackFilter.Review))) track.MarkChecked();
     }
 
     [RelayCommand]

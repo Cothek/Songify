@@ -105,6 +105,13 @@ public sealed class TrackRecord : INotifyPropertyChanged
         }
     }
 
+    /// <summary>The user has checked the saved song: it leaves "To check", and the note on why it was flagged goes.</summary>
+    public void MarkChecked()
+    {
+        NeedsReview = false;
+        Note = null;
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)

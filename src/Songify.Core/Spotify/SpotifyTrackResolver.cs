@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Songify.Core.Infrastructure;
 using Songify.Core.Matching;
+using Songify.Core.Models;
 using Songify.Core.YouTube;
 using static Songify.Core.Infrastructure.JsonValues;
 
@@ -137,7 +138,7 @@ public sealed partial class SpotifyTrackResolver(HttpClient http)
         {
             var json = await GetStringAsync($"https://api.deezer.com/album/{albumId}", null, ct);
             var date = json is null ? null : Text(JsonNode.Parse(json), "release_date");
-            return date is { Length: >= 4 } && int.TryParse(date[..4], out var year) && year is > 1000 and < 3000 ? year : null;
+            return ReleaseYear.FromDate(date);
         }
         catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException
                                    || (ex is TaskCanceledException && !ct.IsCancellationRequested))

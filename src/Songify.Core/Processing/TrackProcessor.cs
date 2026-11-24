@@ -128,6 +128,142 @@ public sealed class TrackProcessor(
         return retryAt;
     }
 
+    /// <summary>Reads the tags of a saved song's file.</summary>
+    public Task<FileTags> ReadSavedTagsAsync(TrackRecord track, CancellationToken ct) =>
+        encoder.ReadTagsAsync(SavedFile(track), ct);
+
+    /// <summary>The file name (without extension) a saved song gets from the template; the edit dialog previews it.</summary>
+    public static string FileBaseName(TrackRecord track, TrackTags tags, AppSettings settings) =>
+        FileNamer.BuildBaseName(settings.FileNameTemplate, tags, track.MatchedVideoId ?? track.VideoId);
+
+    private const string StagedPattern = "~songify-edit-*.tmp";
+    private static readonly TimeSpan StaleStagedAge = TimeSpan.FromHours(1);
+
+    /// <summary>Video IDs being edited: a second save of the same song would race the first one's file moves.</summary>
+    private readonly HashSet<string> _editing = [];
+
+    /// <summary>
+    /// Writes new tags into a saved song's file (the audio is copied, not re-encoded; other tags and the cover are
+    /// kept), renames it from the file name template, and marks the song checked. If the file can't be replaced
+    /// (open in a player, read-only), nothing changes.
+    /// </summary>
+    public async Task EditAsync(TrackRecord track, TrackTags tags, AppSettings settings, CancellationToken ct)
+    {
+        var path = SavedFile(track);
+        lock (_editing)
+        {
+            if (!_editing.Add(track.VideoId)) throw new InvalidOperationException("This song is already being saved.");
+        }
+        try
+        {
+            var extension = Path.GetExtension(path);
+            var baseName = FileBaseName(track, tags, settings);
+            await InWorkDirAsync("edit-" + track.VideoId, async work =>
+            {
+                var current = await encoder.ReadTagsAsync(path, ct);
+                if (current.Tags != tags)
+                {
+                    var plan = AudioEncoder.PlanRetag(extension);
+                    var cover = current.HasCover && plan.Cover != CoverEmbedding.None
+                        ? await encoder.TryExtractCoverAsync(path, work, ct)
+                        : null;
+                    var edited = Path.Combine(work, "edited" + extension);
+                    await encoder.EncodeAsync(path, edited, plan, tags, cover, work, ct, keptTags: current.Other);
+                    await Task.Run(() => SwapIn(edited, path), ct); // copying a big file must not freeze the window
+                    AppLog.Info($"Edited the tags of {Path.GetFileName(path)}");
+                }
+
+                string? renameProblem = null;
+                var finalPath = path;
+                if (!FileNamer.HasBaseName(Path.GetFileName(path), baseName, extension))
+                    (finalPath, renameProblem) = await Task.Run(() => Rename(path, baseName), ct);
+
+                ApplyTags(track, tags);
+                track.FilePath = finalPath;
+                track.MarkChecked();
+                if (renameProblem is not null) track.Note = renameProblem;
+            });
+        }
+        finally
+        {
+            lock (_editing) _editing.Remove(track.VideoId);
+        }
+    }
+
+    private static string SavedFile(TrackRecord track) =>
+        track.Status == TrackStatus.Done && track.FilePath is { } path && File.Exists(path)
+            ? path
+            : throw new InvalidOperationException("The saved file isn't there anymore. It may have been moved, renamed or deleted.");
+
+    /// <summary>
+    /// Replaces <paramref name="path"/> with <paramref name="edited"/>. This is the step that fails when a player has
+    /// the file open, and then the original is left untouched.
+    /// </summary>
+    private static void SwapIn(string edited, string path)
+    {
+        var folder = Path.GetDirectoryName(path)!;
+        DeleteStaleStagedFiles(folder);
+        // Staged next to the original so the swap is a rename on one drive (the work folder may be on another).
+        var staged = Path.Combine(folder, StagedPattern.Replace("*", Guid.NewGuid().ToString("N")));
+        try
+        {
+            File.Copy(edited, staged);
+            try
+            {
+                File.Move(staged, path, overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new InvalidOperationException(
+                    "Couldn't change the file. Close it in any app that's playing it, check that it isn't read-only, and try again.", ex);
+            }
+        }
+        finally
+        {
+            TryDelete(staged); // already gone after a successful swap
+        }
+    }
+
+    /// <summary>Staged copies left by a crash mid-edit; old ones only, so another edit's copy is never touched.</summary>
+    private static void DeleteStaleStagedFiles(string folder)
+    {
+        foreach (var file in Directory.EnumerateFiles(folder, StagedPattern))
+            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(file) > StaleStagedAge) TryDelete(file);
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>Renames a saved file to the template's name. Returns the path it ends up at, and why not if it couldn't.</summary>
+    private static (string Path, string? Problem) Rename(string path, string baseName)
+    {
+        var folder = Path.GetDirectoryName(path)!;
+        lock (OutputLock)
+        {
+            var target = FileNamer.UniquePath(folder, baseName, Path.GetExtension(path), ownPath: path);
+            try
+            {
+                File.Move(path, target);
+                return (target, null);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AppLog.Warn($"Couldn't rename {Path.GetFileName(path)}: {ex.Message}");
+                return (path, $"Saved the new tags but couldn't rename the file: {ex.Message}");
+            }
+        }
+    }
+
+    private static void ApplyTags(TrackRecord track, TrackTags tags)
+    {
+        track.Artist = tags.Artist;
+        track.Title = tags.Title;
+        track.Album = tags.Album;
+    }
+
     private async Task SaveVideoFallbackAsync(SpotifyJob job, string note, AppSettings settings, CancellationToken ct)
     {
         if (VideoPlan(job.Track, job.Parsed, note, settings) is { } plan)
@@ -180,9 +316,7 @@ public sealed class TrackProcessor(
 
         track.Source = plan.Source;
         track.MatchedVideoId = plan.Id;
-        track.Artist = tags.Artist;
-        track.Title = tags.Title;
-        track.Album = tags.Album;
+        ApplyTags(track, tags);
         track.MatchScore = plan.Score;
         track.NeedsReview = plan.NeedsReview;
         track.Note = plan.Note;

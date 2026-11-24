@@ -1,0 +1,124 @@
+<ui:FluentWindow x:Class="Songify.App.EditSongWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:local="clr-namespace:Songify.App"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance local:EditSongViewModel}"
+        Title="Edit song" Width="520" SizeToContent="Height" ResizeMode="NoResize"
+        FontSize="{StaticResource FontBody}" ShowInTaskbar="False"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica" WindowCornerPreference="Round"
+        WindowStartupLocation="CenterOwner">
+
+    <StackPanel>
+        <ui:TitleBar Title="Edit song" ShowMinimize="False" ShowMaximize="False" />
+
+        <StackPanel Margin="24,4,24,24">
+            <ui:InfoBar Title="To check" Message="{Binding ReviewReason}" Severity="Warning"
+                        IsOpen="{Binding NeedsReview, Mode=OneWay}" IsClosable="False" Margin="0,0,0,16" />
+
+            <TextBlock Text="Playlist video" Style="{StaticResource FieldLabel}" />
+            <TextBlock Text="{Binding OriginalTitle}" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+            <TextBlock Text="Reading the file's tags…" Style="{StaticResource Hint}" Margin="0,16,0,0"
+                       Visibility="{Binding IsReading, Converter={StaticResource BoolToVisibility}}" />
+
+            <StackPanel IsEnabled="{Binding IsLoaded}" Margin="0,16,0,0">
+                <TextBlock Text="Title" Style="{StaticResource FieldLabel}" />
+                <ui:TextBox x:Name="TitleInput" Text="{Binding SongTitle, UpdateSourceTrigger=PropertyChanged}"
+                            AutomationProperties.Name="Title" />
+                <TextBlock Text="{Binding TitleError}" Style="{StaticResource FieldError}" />
+
+                <TextBlock Text="Artist" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
+                <ui:TextBox Text="{Binding Artist, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Artist" />
+
+                <TextBlock Text="Album" Style="{StaticResource FieldLabel}" Margin="0,12,0,4" />
+                <ui:TextBox Text="{Binding Album, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Album" />
+
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="110" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="Album artist" Style="{StaticResource FieldLabel}" />
+                        <ui:TextBox Text="{Binding AlbumArtist, UpdateSourceTrigger=PropertyChanged}"
+                                    AutomationProperties.Name="Album artist"
+                                    AutomationProperties.HelpText="Used for {artist} in file names. Leave it empty to use the artist." />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Year" Style="{StaticResource FieldLabel}" />
+                        <ui:TextBox x:Name="YearInput" Text="{Binding Year, UpdateSourceTrigger=PropertyChanged}" MaxLength="4"
+                                    AutomationProperties.Name="Year" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock Style="{StaticResource Hint}"
+                           Text="Album artist is used for {artist} in file names. Leave it empty to use the artist." />
+                <TextBlock Text="{Binding YearError}" Style="{StaticResource FieldError}" />
+
+                <TextBlock Text="File name" Style="{StaticResource FieldLabel}" Margin="0,16,0,4" />
+                <TextBlock TextWrapping="Wrap">
+                    <TextBlock.Style>
+                        <!-- Text set in the style, not on the element, so the trigger can replace it -->
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Text" Value="{Binding FileNamePreview}" />
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsLoaded}" Value="True" />
+                                        <Condition Binding="{Binding FileNamePreview}" Value="{x:Null}" />
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Text" Value="Enter a title to see the file name." />
+                                    <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+
+            <TextBlock Text="{Binding Error}" Style="{StaticResource FieldError}" Margin="0,16,0,0" />
+
+            <Grid Margin="0,24,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Style="{StaticResource Hint}" Margin="0,0,16,0" VerticalAlignment="Center"
+                           Text="Saving also marks it as checked."
+                           Visibility="{Binding NeedsReview, Converter={StaticResource BoolToVisibility}}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <ui:Button x:Name="SaveButton" Appearance="Primary" IsDefault="True" MinWidth="120"
+                               Command="{Binding SaveCommand}">
+                        <ui:Button.Style>
+                            <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                <Setter Property="Content" Value="Save changes" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSaving}" Value="True">
+                                        <Setter Property="Content" Value="Saving…" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ui:Button.Style>
+                    </ui:Button>
+                    <!-- Disabled while saving: the file is being replaced and can't be abandoned halfway -->
+                    <ui:Button Content="Cancel" IsCancel="True" Margin="8,0,0,0" MinWidth="90">
+                        <ui:Button.Style>
+                            <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSaving}" Value="True">
+                                        <Setter Property="IsEnabled" Value="False" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ui:Button.Style>
+                    </ui:Button>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </StackPanel>
+</ui:FluentWindow>

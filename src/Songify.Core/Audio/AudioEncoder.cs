@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
+using System.Text.Json.Nodes;
 using Songify.Core.Infrastructure;
 using Songify.Core.Models;
 using Songify.Core.Tools;
@@ -9,6 +10,10 @@ namespace Songify.Core.Audio;
 
 /// <summary>Tags written to the file. <paramref name="Year"/> is the release year, written as the "date" tag.</summary>
 public sealed record TrackTags(string Title, string? Artist, string? Album, string? AlbumArtist, string? Comment, int? Year = null);
+
+/// <summary>What a saved file holds: its tags, and whether it has cover art.</summary>
+/// <param name="Other">Tags Songify doesn't edit (genre, track number…), kept when the file is re-tagged.</param>
+public sealed record FileTags(TrackTags Tags, bool HasCover, IReadOnlyDictionary<string, string> Other);
 
 /// <summary>How a container stores cover art.</summary>
 public enum CoverEmbedding
@@ -67,40 +72,124 @@ public sealed class AudioEncoder(ToolManager tools)
     /// <summary>Keeps the source stream; picks the container that natively holds its codec.</summary>
     private static OutputPlan PlanCopy(string? codec, double? kbps)
     {
-        string[] copy = ["-c:a", "copy"];
-        string[] copyMp3 = [.. copy, .. Id3v23];
         var c = codec?.ToLowerInvariant() ?? "";
-        var (extension, args, cover, name) =
-            c == "opus" ? (".opus", copy, CoverEmbedding.VorbisComment, "Opus")
-            : c.StartsWith("mp4a", StringComparison.Ordinal) || c == "aac" ? (".m4a", copy, CoverEmbedding.AttachedPicture, "AAC")
-            : c == "vorbis" ? (".ogg", copy, CoverEmbedding.VorbisComment, "Vorbis")
-            : c == "mp3" ? (".mp3", copyMp3, CoverEmbedding.AttachedPicture, "MP3")
-            : (".mka", copy, CoverEmbedding.None, string.IsNullOrEmpty(codec) ? "Unknown codec" : codec!);
+        var (extension, name) =
+            c == "opus" ? (".opus", "Opus")
+            : c.StartsWith("mp4a", StringComparison.Ordinal) || c == "aac" ? (".m4a", "AAC")
+            : c == "vorbis" ? (".ogg", "Vorbis")
+            : c == "mp3" ? (".mp3", "MP3")
+            : (".mka", string.IsNullOrEmpty(codec) ? "Unknown codec" : codec!);
         var quality = (kbps is > 0 ? KbpsLabel(name, kbps.Value) : name) + " (original)";
-        return new OutputPlan(extension, args, cover, quality);
+        return PlanRetag(extension) with { Quality = quality };
     }
 
+    /// <summary>Copies the audio into a container as-is (no re-encoding), with that container's way of storing a cover.</summary>
+    public static OutputPlan PlanRetag(string extension)
+    {
+        var ext = extension.ToLowerInvariant();
+        var cover = ext switch
+        {
+            ".opus" or ".ogg" => CoverEmbedding.VorbisComment,
+            ".mp3" or ".m4a" or ".flac" => CoverEmbedding.AttachedPicture,
+            _ => CoverEmbedding.None,
+        };
+        string[] args = ext == ".mp3" ? ["-c:a", "copy", .. Id3v23] : ["-c:a", "copy"];
+        return new OutputPlan(ext, args, cover, "");
+    }
+
+    /// <summary>Reads a saved file's tags with ffprobe.</summary>
+    public async Task<FileTags> ReadTagsAsync(string path, CancellationToken ct)
+    {
+        var result = await ProcessRunner.RunAsync(tools.Ffprobe,
+            ["-v", "error", "-show_entries", "format_tags:stream_tags:stream=codec_type", "-of", "json", path], ct);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"Could not read the file's tags: {result.ErrorSummary}");
+        return ParseProbeTags(result.StdOut, Path.GetFileNameWithoutExtension(path));
+    }
+
+    private static readonly string[] TitleKeys = ["title"], ArtistKeys = ["artist"], AlbumKeys = ["album"],
+        AlbumArtistKeys = ["album_artist", "albumartist", "album artist"], CommentKeys = ["comment", "description"],
+        DateKeys = ["date", "year"];
+
+    /// <summary>Tags that describe the container or encoder, not the song: ffmpeg writes its own.</summary>
+    private static readonly string[] TechnicalKeys =
+        ["encoder", "major_brand", "minor_version", "compatible_brands", "handler_name", "vendor_id", "language",
+         "creation_time", "duration", "metadata_block_picture"];
+
+    /// <summary>
+    /// ffprobe JSON → tags. Containers differ in where tags live (Ogg: on the audio stream; MP3, M4A: on the
+    /// file) and in key case, so both places are read, case-insensitively. A cover shows up as a video stream.
+    /// Tags Songify doesn't edit (genre, track number… added in another app) are returned to be kept.
+    /// </summary>
+    public static FileTags ParseProbeTags(string json, string fallbackTitle)
+    {
+        var root = JsonNode.Parse(json);
+        var streams = root?["streams"] as JsonArray ?? [];
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        void Add(JsonNode? tags)
+        {
+            if (tags is not JsonObject o) return;
+            foreach (var (key, _) in o)
+                if (JsonValues.Text(o, key) is { } value) values.TryAdd(key, value.Trim());
+        }
+        Add(root?["format"]?["tags"]);
+        foreach (var stream in streams.Where(s => JsonValues.Text(s, "codec_type") == "audio"))
+            Add(stream?["tags"]);
+
+        string? Get(string[] keys) => keys.Select(values.GetValueOrDefault).FirstOrDefault(v => v is not null);
+        var tags = new TrackTags(
+            Get(TitleKeys) ?? fallbackTitle, Get(ArtistKeys), Get(AlbumKeys), Get(AlbumArtistKeys), Get(CommentKeys),
+            ReleaseYear.FromDate(Get(DateKeys)));
+
+        var known = new HashSet<string>(
+            [.. TitleKeys, .. ArtistKeys, .. AlbumKeys, .. AlbumArtistKeys, .. CommentKeys, .. DateKeys, .. TechnicalKeys],
+            StringComparer.OrdinalIgnoreCase);
+        var other = values.Where(v => !known.Contains(v.Key) && !v.Key.Contains('='))
+            .ToDictionary(v => v.Key, v => v.Value, StringComparer.OrdinalIgnoreCase);
+        return new FileTags(tags, streams.Any(s => JsonValues.Text(s, "codec_type") == "video"), other);
+    }
+
+    /// <summary>Copies a file's embedded cover out unchanged. Null if it has none or it can't be read.</summary>
+    public async Task<string?> TryExtractCoverAsync(string path, string workDir, CancellationToken ct)
+    {
+        var cover = Path.Combine(workDir, "cover.jpg");
+        var result = await ProcessRunner.RunAsync(tools.Ffmpeg,
+            ["-hide_banner", "-nostdin", "-y", "-i", path, "-map", "0:v:0", "-c:v", "copy", "-f", "image2", "-update", "1", cover], ct);
+        if (result.ExitCode == 0 && File.Exists(cover)) return cover;
+        AppLog.Warn($"Could not read the cover of {Path.GetFileName(path)}: {result.ErrorSummary}");
+        return null;
+    }
+
+    /// <param name="keptTags">
+    /// Set when re-tagging a saved file: its other tags, written back unchanged. The cover then also came from the
+    /// file and is embedded as-is instead of being cropped and re-compressed.
+    /// </param>
     public async Task EncodeAsync(
-        string input, string output, OutputPlan plan, TrackTags tags, string? coverPath, string workDir, CancellationToken ct)
+        string input, string output, OutputPlan plan, TrackTags tags, string? coverPath, string workDir, CancellationToken ct,
+        IReadOnlyDictionary<string, string>? keptTags = null)
     {
         string? metadataFile = null;
         if (plan.Cover == CoverEmbedding.VorbisComment)
         {
             // Ogg tags go through an ffmetadata file: an embedded picture is far longer than a command line allows.
-            var picture = coverPath is null ? null : await TrySquareCoverAsync(coverPath, workDir, ct);
+            var picture = coverPath is null ? null
+                : keptTags is not null && await FinalCoverBlockAsync(coverPath, ct) is { } final ? final
+                : await TrySquareCoverAsync(coverPath, workDir, ct);
             metadataFile = Path.Combine(workDir, "tags.ffmeta");
-            await File.WriteAllTextAsync(metadataFile, BuildFfMetadata(tags, picture), ct);
+            await File.WriteAllTextAsync(metadataFile, BuildFfMetadata(tags, picture, keptTags), ct);
         }
 
         var attachedCover = plan.Cover == CoverEmbedding.AttachedPicture ? coverPath : null;
-        var result = await ProcessRunner.RunAsync(tools.Ffmpeg, BuildArgs(input, output, plan, tags, attachedCover, metadataFile), ct);
+        var result = await ProcessRunner.RunAsync(tools.Ffmpeg, BuildArgs(input, output, plan, tags, attachedCover, metadataFile, keptTags), ct);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"ffmpeg failed: {result.ErrorSummary}");
     }
 
     public static List<string> BuildArgs(
-        string input, string output, OutputPlan plan, TrackTags tags, string? attachedCover, string? metadataFile)
+        string input, string output, OutputPlan plan, TrackTags tags, string? attachedCover, string? metadataFile,
+        IReadOnlyDictionary<string, string>? keptTags = null)
     {
+        var coverIsFinal = keptTags is not null;
         var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-i", input };
         var nextInput = 1;
         var coverInput = attachedCover is null ? -1 : nextInput++;
@@ -116,11 +205,10 @@ public sealed class AudioEncoder(ToolManager tools)
 
         if (attachedCover is not null)
         {
+            args.AddRange(["-map", $"{coverInput}:v:0"]);
+            args.AddRange(coverIsFinal ? ["-c:v", "copy"] : ["-c:v", "mjpeg", "-vf", CropToSquare]);
             args.AddRange(
             [
-                "-map", $"{coverInput}:v:0",
-                "-c:v", "mjpeg",
-                "-vf", CropToSquare,
                 "-disposition:v:0", "attached_pic",
                 "-metadata:s:v", "title=Album cover",
                 "-metadata:s:v", "comment=Cover (front)",
@@ -130,7 +218,7 @@ public sealed class AudioEncoder(ToolManager tools)
         args.AddRange(plan.AudioArgs);
 
         if (metadataFile is null)
-            foreach (var (key, value) in TagPairs(tags))
+            foreach (var (key, value) in TagPairs(tags, keptTags))
                 args.AddRange(["-metadata", $"{key}={value}"]);
 
         args.Add(output);
@@ -140,22 +228,23 @@ public sealed class AudioEncoder(ToolManager tools)
     // Video thumbnails are 16:9; covers are square.
     private const string CropToSquare = @"crop=min(iw\,ih):min(iw\,ih)";
 
-    private static IEnumerable<(string Key, string Value)> TagPairs(TrackTags tags) =>
+    private static IEnumerable<(string Key, string Value)> TagPairs(TrackTags tags, IReadOnlyDictionary<string, string>? kept) =>
         new (string Key, string? Value)[]
         {
             ("title", tags.Title), ("artist", tags.Artist), ("album", tags.Album),
             ("album_artist", tags.AlbumArtist), ("date", tags.Year?.ToString(CultureInfo.InvariantCulture)),
             ("comment", tags.Comment),
         }
+        .Concat((kept ?? new Dictionary<string, string>()).Select(t => (Key: t.Key, Value: (string?)t.Value)))
         .Where(t => !string.IsNullOrWhiteSpace(t.Value))
         .Select(t => (t.Key, t.Value!));
 
     /// <summary>ffmpeg's metadata file format; <paramref name="picture"/> is a FLAC picture block.</summary>
-    public static string BuildFfMetadata(TrackTags tags, byte[]? picture)
+    public static string BuildFfMetadata(TrackTags tags, byte[]? picture, IReadOnlyDictionary<string, string>? keptTags = null)
     {
         var sb = new StringBuilder(";FFMETADATA1\n");
-        foreach (var (key, value) in TagPairs(tags))
-            sb.Append(key).Append('=').Append(EscapeFfMetadata(value)).Append('\n');
+        foreach (var (key, value) in TagPairs(tags, keptTags))
+            sb.Append(EscapeFfMetadata(key)).Append('=').Append(EscapeFfMetadata(value)).Append('\n');
         if (picture is not null)
             sb.Append("METADATA_BLOCK_PICTURE=").Append(EscapeFfMetadata(Convert.ToBase64String(picture))).Append('\n');
         return sb.ToString();
@@ -188,6 +277,31 @@ public sealed class AudioEncoder(ToolManager tools)
         U32(0);  // palette size (not indexed)
         U32(jpeg.Length); ms.Write(jpeg);
         return ms.ToArray();
+    }
+
+    /// <summary>An Ogg picture block for a cover taken from a saved file. Null if it isn't a JPEG.</summary>
+    private static async Task<byte[]?> FinalCoverBlockAsync(string coverPath, CancellationToken ct)
+    {
+        var jpeg = await File.ReadAllBytesAsync(coverPath, ct);
+        return JpegSize(jpeg) is var (width, height) ? FlacPictureBlock(jpeg, width, height) : null;
+    }
+
+    /// <summary>Width and height from a JPEG's start-of-frame segment, or null if it isn't a JPEG.</summary>
+    public static (int Width, int Height)? JpegSize(ReadOnlySpan<byte> jpeg)
+    {
+        if (jpeg.Length < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8) return null;
+        var i = 2;
+        while (i + 9 < jpeg.Length)
+        {
+            if (jpeg[i] != 0xFF) return null;
+            var marker = jpeg[i + 1];
+            if (marker == 0xFF) { i++; continue; } // fill byte
+            // SOF0–SOF15, except DHT (C4), JPG (C8) and DAC (CC)
+            if (marker is >= 0xC0 and <= 0xCF and not 0xC4 and not 0xC8 and not 0xCC)
+                return (BinaryPrimitives.ReadUInt16BigEndian(jpeg[(i + 7)..]), BinaryPrimitives.ReadUInt16BigEndian(jpeg[(i + 5)..]));
+            i += 2 + BinaryPrimitives.ReadUInt16BigEndian(jpeg[(i + 2)..]);
+        }
+        return null;
     }
 
     /// <summary>Crops and scales the cover to a square JPEG. Cover art is optional: failure means no cover.</summary>

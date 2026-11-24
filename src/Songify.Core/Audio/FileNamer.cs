@@ -38,14 +38,31 @@ public static partial class FileNamer
         return ReservedName().IsMatch(s) ? "_" + s : s;
     }
 
-    /// <summary>Returns folder\baseName.ext, or folder\baseName (2).ext etc. if taken.</summary>
-    public static string UniquePath(string folder, string baseName, string extension)
+    /// <summary>
+    /// Returns folder\baseName.ext, or folder\baseName (2).ext etc. if taken. <paramref name="ownPath"/> (a file being
+    /// renamed) doesn't count as taken, so a case-only rename keeps its number.
+    /// </summary>
+    public static string UniquePath(string folder, string baseName, string extension, string? ownPath = null)
     {
         var path = Path.Combine(folder, baseName + extension);
-        for (var i = 2; File.Exists(path); i++)
+        for (var i = 2; File.Exists(path) && !string.Equals(path, ownPath, StringComparison.OrdinalIgnoreCase); i++)
             path = Path.Combine(folder, $"{baseName} ({i}){extension}");
         return path;
     }
+
+    /// <summary>
+    /// True if <paramref name="fileName"/> already is <paramref name="baseName"/> plus extension, or a numbered copy
+    /// of it from <see cref="UniquePath"/> ("Name (2).ext"). Case counts: a case-only change is still a rename.
+    /// </summary>
+    public static bool HasBaseName(string fileName, string baseName, string extension)
+    {
+        if (!fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) return false;
+        var stem = fileName[..^extension.Length];
+        return stem == baseName || (stem.StartsWith(baseName + " (", StringComparison.Ordinal) && CopyNumber().IsMatch(stem[baseName.Length..]));
+    }
+
+    [GeneratedRegex(@"^ \(\d+\)$")]
+    private static partial Regex CopyNumber();
 
     [GeneratedRegex(@"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", RegexOptions.IgnoreCase)]
     private static partial Regex ReservedName();

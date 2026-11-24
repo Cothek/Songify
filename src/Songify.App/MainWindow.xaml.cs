@@ -11,9 +11,28 @@ public partial class MainWindow : FluentWindow
     {
         InitializeComponent();
         DataContext = viewModel;
+        viewModel.EditRequested += editor => new EditSongWindow(editor) { Owner = this }.ShowDialog();
     }
 
     private MainViewModel ViewModel => (MainViewModel)DataContext;
+
+    private void TrackRow_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is DataGridRow { Item: TrackRecord track }) Edit(track);
+    }
+
+    // F2 edits, as it renames in Explorer.
+    private void TrackGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.F2 || TrackGrid.SelectedItem is not TrackRecord track) return;
+        e.Handled = true;
+        Edit(track);
+    }
+
+    private void Edit(TrackRecord track)
+    {
+        if (ViewModel.EditSongCommand.CanExecute(track)) ViewModel.EditSongCommand.Execute(track);
+    }
 
     // Tab lands on the grid itself, which shows no focus. Move focus to a cell so the row's focus border shows.
     private void TrackGrid_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
