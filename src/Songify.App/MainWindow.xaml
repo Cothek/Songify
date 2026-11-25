@@ -317,6 +317,8 @@
                             <ui:Button Content="Try again" Command="{Binding RetrySelectedCommand}"
                                        ToolTip="Process the selected failed songs again" />
                             <ui:Button Content="Open save folder" Margin="8,0,0,0" Command="{Binding OpenOutputFolderCommand}" />
+                            <ui:Button Content="Level volume…" Margin="8,0,0,0" Command="{Binding LevelVolumeCommand}"
+                                       ToolTip="Make the songs in a folder play equally loud" />
                         </StackPanel>
                     </Grid>
                 </StackPanel>

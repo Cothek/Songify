@@ -105,7 +105,9 @@ public sealed partial class MainViewModel : ObservableObject
         Update = new UpdateViewModel(service, exitForUpdate, dispatcher);
         Update.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(UpdateViewModel.Stage)) EditSongCommand.NotifyCanExecuteChanged();
+            if (e.PropertyName != nameof(UpdateViewModel.Stage)) return;
+            EditSongCommand.NotifyCanExecuteChanged();
+            LevelVolumeCommand.NotifyCanExecuteChanged();
         };
 
         _loading = true;
@@ -316,6 +318,15 @@ public sealed partial class MainViewModel : ObservableObject
     {
         foreach (var track in SelectedTracks) _service.Retry(track);
     }
+
+    /// <summary>Asks the window to show the "Level volume" window.</summary>
+    public event Action<LevelVolumeViewModel>? LevelVolumeRequested;
+
+    // Not while Songify is closing for an update: the window would be closed mid-run.
+    private bool CanLevelVolume() => Update.Stage != UpdateStage.Restarting;
+
+    [RelayCommand(CanExecute = nameof(CanLevelVolume))]
+    private void LevelVolume() => LevelVolumeRequested?.Invoke(new LevelVolumeViewModel(_service));
 
     /// <summary>Asks the window to show the "Edit song" dialog.</summary>
     public event Action<EditSongViewModel>? EditRequested;

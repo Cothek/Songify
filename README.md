@@ -17,6 +17,21 @@ Songs saved from the video's audio or from a lower-confidence match are listed u
 
 Editing fixes names, not the recording: if the saved audio is the wrong version, editing won't change that.
 
+## Levelling the volume
+
+**Level volume…** (above the song list) makes the songs in any folder play equally loud, in any player. It measures each song's loudness (EBU R128, with ffmpeg) and turns it up or down to the target you pick: −14 LUFS (like Spotify and YouTube), −16 or −18. A quiet song is turned up only until its peaks reach −1 dBTP, so it never clips; it may then stay a little quieter than the rest.
+
+The volume itself changes, not a ReplayGain tag, so it works in players that ignore those tags (Windows Media Player, many phones and cars):
+
+- **MP3:** without re-encoding, by changing each frame's gain (as mp3gain does), in steps of 1.5 dB.
+- **Opus:** without re-encoding, through the output gain in the file's header.
+- **FLAC, WAV:** the samples are scaled and saved again in the same lossless format (no codec loss).
+- **AAC (.m4a), Ogg Vorbis:** decoded and encoded again at the same bitrate, which loses a little quality. The Quality column says "Re-encoded".
+
+Tags and cover art are kept (WAV files keep their tags but lose an embedded cover). ReplayGain, R128, mp3gain and iTunes Sound Check tags are removed, since they'd now be wrong.
+
+By default the levelled songs are saved as copies in a separate folder (`<folder> (levelled)`, with the same subfolders), so you can listen to them first. When they sound right, select them and click **Replace originals…**: each copy takes its original's place, and the original goes to the Recycle Bin. You can also level the songs in place; the originals then go to the Recycle Bin right away. On a drive without a Recycle Bin (a network drive), Windows asks before deleting them for good.
+
 ## Spotify recording
 
 For songs YouTube Music doesn't have, Songify can record the album version from the Spotify desktop app (a Free account works). Without the Spotify API it finds the song through Deezer (for the recording's ISRC) and MusicBrainz (which links many ISRCs to Spotify), so many songs, especially less popular ones, can't be found and fall back to the video's audio.
@@ -89,7 +104,7 @@ A tag with a suffix, like `v0.2.0-beta.1`, is published as a pre-release, so the
 
 ## Layout
 
-- `src/Songify.Core` – everything but the UI: playlist polling and work queue (`Processing/`), title parsing and match scoring (`Matching/`), yt-dlp and YouTube Music clients (`YouTube/`), ffmpeg encoding, tag editing and file naming (`Audio/`), tool downloads (`Tools/`), self-update from GitHub releases (`Updates/`).
+- `src/Songify.Core` – everything but the UI: playlist polling and work queue (`Processing/`), title parsing and match scoring (`Matching/`), yt-dlp and YouTube Music clients (`YouTube/`), ffmpeg encoding, tag editing, file naming and volume levelling (`Audio/`), tool downloads (`Tools/`), self-update from GitHub releases (`Updates/`).
 - `src/Songify.Core/Spotify` – Spotify song lookup (`SpotifyTrackResolver`), the recorder interface, and finding the song in a capture (`RecordingCutter`).
 - `src/Songify.Spotify` – the Windows-only recorder: per-app audio capture (NAudio), the Windows media session (what Spotify reports as playing), output mute and idle detection. Needs Windows 10 version 2004 or later.
 - `src/Songify.App` – WPF window (MVVM via CommunityToolkit.Mvvm). The look comes from [WPF UI](https://github.com/lepoco/wpfui) (Windows 11 Fluent): use its theme brushes (`TextFillColorPrimaryBrush`, `SystemFillColorCriticalBrush`, …) via `DynamicResource` so colors follow the light/dark setting (Appearance → Theme; "Match Windows" by default). App-specific styles are in `App.xaml`.

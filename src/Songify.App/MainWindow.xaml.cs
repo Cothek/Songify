@@ -13,6 +13,8 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         DataContext = viewModel;
         viewModel.EditRequested += editor => new EditSongWindow(editor) { Owner = this }.ShowDialog();
+        viewModel.LevelVolumeRequested += ShowLevelVolume;
+        Closing += StopLevellingFirst;
         viewModel.Update.PropertyChanged += OnUpdateChanged;
         Loaded += (_, _) =>
         {
@@ -34,6 +36,38 @@ public partial class MainWindow : FluentWindow
     }, System.Windows.Threading.DispatcherPriority.Background);
 
     private MainViewModel ViewModel => (MainViewModel)DataContext;
+
+    /// <summary>One "Level volume" window at a time; not modal, so songs keep saving and the list stays usable.</summary>
+    private void ShowLevelVolume(LevelVolumeViewModel viewModel)
+    {
+        if (OwnedWindows.OfType<LevelVolumeWindow>().FirstOrDefault() is { } open)
+        {
+            open.Activate();
+            return;
+        }
+        new LevelVolumeWindow(viewModel) { Owner = this }.Show();
+    }
+
+    /// <summary>
+    /// Closing this window exits Songify, which would cut a levelling run off between moving an original to the
+    /// Recycle Bin and putting the levelled file in its place. Stop the run first, then close.
+    /// </summary>
+    private void StopLevellingFirst(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (OwnedWindows.OfType<LevelVolumeWindow>().FirstOrDefault(w => w.IsBusy) is not { } levelling) return;
+        e.Cancel = true;
+        if (!_closeAfterLevelling)
+        {
+            _closeAfterLevelling = true;
+            levelling.ViewModel.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(LevelVolumeViewModel.IsRunning) && !levelling.ViewModel.IsRunning) Close();
+            };
+        }
+        levelling.ViewModel.StopCommand.Execute(null);
+    }
+
+    private bool _closeAfterLevelling;
 
     private void TrackRow_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {

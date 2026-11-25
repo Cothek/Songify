@@ -19,7 +19,7 @@ public sealed partial class UpdateViewModel : ObservableObject
 {
     private static readonly TimeSpan FirstCheckDelay = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(12);
-    private static readonly TimeSpan EditorPoll = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan WindowPoll = TimeSpan.FromSeconds(1);
 
     private readonly SongifyService _service;
     private readonly Action _exitForUpdate;
@@ -80,7 +80,8 @@ public sealed partial class UpdateViewModel : ObservableObject
     [ObservableProperty, NotifyPropertyChangedFor(nameof(Title))] private AvailableUpdate? _update;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(Message))] private double _progress;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(Message))] private int _busySongs;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(Message))] private bool _waitingForEditor;
+    /// <summary>Why the restart waits for a window (an open song editor, a volume levelling run), or null.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(Message))] private string? _waitingForWindow;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(Message))] private string? _error;
 
     public bool IsVisible => Stage != UpdateStage.None;
@@ -100,7 +101,7 @@ public sealed partial class UpdateViewModel : ObservableObject
     {
         UpdateStage.Available => "Updating restarts Songify. Your settings, songs and queue are kept.",
         UpdateStage.Downloading => Progress < 1 ? $"Downloading… {Progress:P0}" : "Checking the download…",
-        UpdateStage.Waiting when WaitingForEditor => "Waiting for you to close the song editor.",
+        UpdateStage.Waiting when WaitingForWindow is { } window => window,
         UpdateStage.Waiting => BusySongs switch
         {
             0 => "Getting ready to restart…",
@@ -183,15 +184,21 @@ public sealed partial class UpdateViewModel : ObservableObject
         }
     }
 
-    /// <summary>No song being saved, and no song editor open (closing Songify would lose its changes).</summary>
+    /// <summary>
+    /// No song being saved, no song editor open (closing Songify would lose its changes), and no volume levelling
+    /// run (closing would stop it halfway).
+    /// </summary>
     private async Task WaitUntilIdleAsync(CancellationToken ct)
     {
         while (true)
         {
             await _service.HoldAndWaitUntilIdleAsync(new Progress<int>(n => BusySongs = n), ct);
-            WaitingForEditor = Application.Current?.Windows.OfType<EditSongWindow>().Any() == true;
-            if (!WaitingForEditor) return;
-            await Task.Delay(EditorPoll, ct);
+            var windows = Application.Current?.Windows.OfType<Window>().ToList() ?? [];
+            WaitingForWindow = windows.OfType<EditSongWindow>().Any() ? "Waiting for you to close the song editor."
+                : windows.OfType<LevelVolumeWindow>().Any(w => w.IsBusy) ? "Waiting for volume levelling to finish."
+                : null;
+            if (WaitingForWindow is null) return;
+            await Task.Delay(WindowPoll, ct);
         }
     }
 

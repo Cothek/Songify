@@ -1,0 +1,211 @@
+<ui:FluentWindow x:Class="Songify.App.LevelVolumeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:local="clr-namespace:Songify.App"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance local:LevelVolumeViewModel}"
+        Title="Level volume" Width="960" Height="700" MinWidth="760" MinHeight="520"
+        FontSize="{StaticResource FontBody}"
+        ExtendsContentIntoTitleBar="True" WindowBackdropType="Mica" WindowCornerPreference="Round"
+        WindowStartupLocation="CenterOwner">
+
+    <Window.Resources>
+        <Style x:Key="CellText" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+        </Style>
+        <Style x:Key="CellMuted" TargetType="TextBlock" BasedOn="{StaticResource CellText}">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Title="Level volume" ShowMinimize="False" />
+
+        <Grid Grid.Row="1" Margin="24,4,24,20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       Text="Turns each song up or down so they all play equally loud, in any player. MP3, Opus, FLAC and WAV keep their exact quality; AAC and Ogg Vorbis are re-encoded, which loses a little." />
+
+            <!-- Folder and target -->
+            <Grid Grid.Row="1" Margin="0,16,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="24" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Folder" Style="{StaticResource FieldLabel}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ui:TextBox Text="{Binding Folder, Mode=OneWay}" IsReadOnly="True" AutomationProperties.Name="Folder" />
+                        <ui:Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" VerticalAlignment="Stretch"
+                                   Command="{Binding BrowseFolderCommand}" IsEnabled="{Binding IsIdle}" />
+                        <ui:Button Grid.Column="2" Content="Refresh" Margin="8,0,0,0" VerticalAlignment="Stretch"
+                                   Command="{Binding ScanCommand}" ToolTip="List the folder's songs again and measure them" />
+                    </Grid>
+                    <CheckBox Content="Include subfolders" Margin="0,8,0,0" IsChecked="{Binding IncludeSubfolders}"
+                              IsEnabled="{Binding IsIdle}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Width="300">
+                    <TextBlock Text="Target loudness" Style="{StaticResource FieldLabel}" />
+                    <ComboBox ItemsSource="{Binding Targets}" DisplayMemberPath="Label" SelectedItem="{Binding Target}"
+                              IsEnabled="{Binding IsIdle}" AutomationProperties.Name="Target loudness" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Quiet songs are only turned up as far as they can go without clipping." />
+                </StackPanel>
+            </Grid>
+
+            <!-- Songs -->
+            <DataGrid x:Name="FileGrid" Grid.Row="2" ItemsSource="{Binding Files}"
+                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                      SelectionMode="Extended" SelectionUnit="FullRow" HeadersVisibility="Column"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                      EnableRowVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                      PreviewKeyDown="FileGrid_PreviewKeyDown"
+                      AutomationProperties.Name="Songs">
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow" BasedOn="{StaticResource DefaultDataGridRowStyle}">
+                        <Setter Property="BorderThickness" Value="2" />
+                        <Style.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource FocusStrokeColorOuterBrush}" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Width="60" CanUserSort="False">
+                        <DataGridTemplateColumn.Header>
+                            <CheckBox IsChecked="{Binding DataContext.AllSelected, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                      IsEnabled="{Binding DataContext.IsIdle, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                      MinWidth="0" AutomationProperties.Name="Select all songs" />
+                        </DataGridTemplateColumn.Header>
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="{x:Type local:LevelFileItem}">
+                                <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" MinWidth="0"
+                                          IsEnabled="{Binding CanSelect}" Focusable="False"
+                                          AutomationProperties.Name="{Binding RelativePath}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Song" Width="3*" SortMemberPath="RelativePath">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="{x:Type local:LevelFileItem}">
+                                <TextBlock Text="{Binding RelativePath}" Style="{StaticResource CellText}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Loudness" Width="100" SortMemberPath="Analysis.Loudness.IntegratedLufs">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="{x:Type local:LevelFileItem}">
+                                <TextBlock Text="{Binding LoudnessText}" Style="{StaticResource CellMuted}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Change" Width="90" SortMemberPath="PlannedGain">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="{x:Type local:LevelFileItem}">
+                                <TextBlock Text="{Binding ChangeText}" Style="{StaticResource CellText}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Quality" Width="100" SortMemberPath="MethodText">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="{x:Type local:LevelFileItem}">
+                                <TextBlock Text="{Binding MethodText}" ToolTip="{Binding MethodHint}"
+                                           Style="{StaticResource CellMuted}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Status" Width="2*" SortMemberPath="StatusText">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate DataType="{x:Type local:LevelFileItem}">
+                                <TextBlock x:Name="Status" Text="{Binding StatusText}" Style="{StaticResource CellMuted}" />
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsProblem}" Value="True">
+                                        <Setter TargetName="Status" Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <TextBlock Grid.Row="2" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" MaxWidth="360"
+                       IsHitTestVisible="False"
+                       Visibility="{Binding HasNoFiles, Converter={StaticResource BoolToVisibility}}"
+                       Text="No songs here. Choose a folder with MP3, M4A, Opus, Ogg, FLAC or WAV files." />
+
+            <!-- Where the levelled songs go -->
+            <StackPanel Grid.Row="3" Margin="0,16,0,0" IsEnabled="{Binding IsIdle}">
+                <TextBlock Text="{Binding SelectionText}" Style="{StaticResource HideWhenEmpty}"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="{StaticResource FontSmall}"
+                           Margin="0,0,0,12" />
+                <RadioButton GroupName="Destination" IsChecked="{Binding SaveCopies}">
+                    <TextBlock TextWrapping="Wrap" Text="Save levelled copies, so you can listen to them before replacing the originals" />
+                </RadioButton>
+                <Grid Margin="28,4,0,0" IsEnabled="{Binding SaveCopies}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ui:TextBox Text="{Binding CopiesFolder, Mode=OneWay}" IsReadOnly="True" AutomationProperties.Name="Copies folder" />
+                    <ui:Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" VerticalAlignment="Stretch"
+                               Command="{Binding BrowseCopiesFolderCommand}" />
+                    <ui:Button Grid.Column="2" Content="Open" Margin="8,0,0,0" VerticalAlignment="Stretch"
+                               Command="{Binding OpenCopiesFolderCommand}" ToolTip="Open the copies folder" />
+                </Grid>
+                <RadioButton GroupName="Destination" Margin="0,12,0,0"
+                             IsChecked="{Binding SaveCopies, Converter={x:Static local:InverseBool.Instance}}">
+                    <TextBlock TextWrapping="Wrap" Text="Change the songs themselves (the originals go to the Recycle Bin)" />
+                </RadioButton>
+            </StackPanel>
+
+            <!-- Progress and actions -->
+            <Grid Grid.Row="4" Margin="0,20,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap" Style="{StaticResource HideWhenEmpty}"
+                               AutomationProperties.LiveSetting="Polite" />
+                    <TextBlock Text="{Binding Error}" Style="{StaticResource FieldError}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ui:Button Content="Stop" Command="{Binding StopCommand}" MinWidth="90"
+                               Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                    <ui:Button Content="{Binding ReplaceLabel}" Margin="8,0,0,0" Command="{Binding ReplaceOriginalsCommand}"
+                               ToolTip="Put the selected songs' levelled copies in place of the originals"
+                               Visibility="{Binding HasCopies, Converter={StaticResource BoolToVisibility}}" />
+                    <ui:Button Content="{Binding LevelLabel}" Appearance="Primary" Margin="8,0,0,0" MinWidth="160"
+                               Command="{Binding LevelCommand}" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Grid>
+</ui:FluentWindow>

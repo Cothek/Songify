@@ -139,9 +139,6 @@ public sealed class TrackProcessor(
     public static string FileBaseName(TrackRecord track, TrackTags tags, AppSettings settings) =>
         FileNamer.BuildBaseName(settings.FileNameTemplate, tags, track.MatchedVideoId ?? track.VideoId);
 
-    private const string StagedPattern = "~songify-edit-*.tmp";
-    private static readonly TimeSpan StaleStagedAge = TimeSpan.FromHours(1);
-
     /// <summary>Video IDs being edited: a second save of the same song would race the first one's file moves.</summary>
     private readonly HashSet<string> _editing = [];
 
@@ -172,13 +169,9 @@ public sealed class TrackProcessor(
                 var current = await encoder.ReadTagsAsync(path, ct);
                 if (current.Tags != tags)
                 {
-                    var plan = AudioEncoder.PlanRetag(extension);
-                    var cover = current.HasCover && plan.Cover != CoverEmbedding.None
-                        ? await encoder.TryExtractCoverAsync(path, work, ct)
-                        : null;
                     var edited = Path.Combine(work, "edited" + extension);
-                    await encoder.EncodeAsync(path, edited, plan, tags, cover, work, ct, keptTags: current.Other);
-                    await Task.Run(() => SwapIn(edited, path), ct); // copying a big file must not freeze the window
+                    await encoder.RewriteAsync(path, edited, AudioEncoder.PlanRetag(extension), current, tags, work, ct);
+                    await Task.Run(() => FileSwap.Replace(edited, path), ct); // copying a big file must not freeze the window
                     AppLog.Info($"Edited the tags of {Path.GetFileName(path)}");
                 }
 
@@ -203,48 +196,6 @@ public sealed class TrackProcessor(
         track.Status == TrackStatus.Done && track.FilePath is { } path && File.Exists(path)
             ? path
             : throw new InvalidOperationException("The saved file isn't there anymore. It may have been moved, renamed or deleted.");
-
-    /// <summary>
-    /// Replaces <paramref name="path"/> with <paramref name="edited"/>. This is the step that fails when a player has
-    /// the file open, and then the original is left untouched.
-    /// </summary>
-    private static void SwapIn(string edited, string path)
-    {
-        var folder = Path.GetDirectoryName(path)!;
-        DeleteStaleStagedFiles(folder);
-        // Staged next to the original so the swap is a rename on one drive (the work folder may be on another).
-        var staged = Path.Combine(folder, StagedPattern.Replace("*", Guid.NewGuid().ToString("N")));
-        try
-        {
-            File.Copy(edited, staged);
-            try
-            {
-                File.Move(staged, path, overwrite: true);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                throw new InvalidOperationException(
-                    "Couldn't change the file. Close it in any app that's playing it, check that it isn't read-only, and try again.", ex);
-            }
-        }
-        finally
-        {
-            TryDelete(staged); // already gone after a successful swap
-        }
-    }
-
-    /// <summary>Staged copies left by a crash mid-edit; old ones only, so another edit's copy is never touched.</summary>
-    private static void DeleteStaleStagedFiles(string folder)
-    {
-        foreach (var file in Directory.EnumerateFiles(folder, StagedPattern))
-            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(file) > StaleStagedAge) TryDelete(file);
-    }
-
-    private static void TryDelete(string path)
-    {
-        try { File.Delete(path); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-    }
 
     /// <summary>Renames a saved file to the template's name. Returns the path it ends up at, and why not if it couldn't.</summary>
     private static (string Path, string? Problem) Rename(string path, string baseName)
@@ -280,20 +231,7 @@ public sealed class TrackProcessor(
     }
 
     /// <summary>Runs <paramref name="action"/> in a fresh temp folder that is deleted afterwards.</summary>
-    private async Task InWorkDirAsync(string name, Func<string, Task> action)
-    {
-        var work = Path.Combine(workRoot, name);
-        Directory.CreateDirectory(work);
-        try
-        {
-            await action(work);
-        }
-        finally
-        {
-            try { Directory.Delete(work, recursive: true); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        }
-    }
+    private Task InWorkDirAsync(string name, Func<string, Task> action) => WorkDir.RunAsync(workRoot, name, action);
 
     private async Task DownloadAndSaveAsync(TrackRecord track, SourcePlan plan, string work, AppSettings settings, CancellationToken ct)
     {

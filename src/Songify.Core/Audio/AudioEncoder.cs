@@ -98,13 +98,17 @@ public sealed class AudioEncoder(ToolManager tools)
     }
 
     /// <summary>Reads a saved file's tags with ffprobe.</summary>
-    public async Task<FileTags> ReadTagsAsync(string path, CancellationToken ct)
+    /// <param name="fileNameAsTitle">
+    /// Without a title tag, use the file name as the title. Off when the tags are written back unchanged: an empty
+    /// title isn't written, so the file doesn't gain one.
+    /// </param>
+    public async Task<FileTags> ReadTagsAsync(string path, CancellationToken ct, bool fileNameAsTitle = true)
     {
         var result = await ProcessRunner.RunAsync(tools.Ffprobe,
             ["-v", "error", "-show_entries", "format_tags:stream_tags:stream=codec_type", "-of", "json", path], ct);
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Could not read the file's tags: {result.ErrorSummary}");
-        return ParseProbeTags(result.StdOut, Path.GetFileNameWithoutExtension(path));
+        return ParseProbeTags(result.StdOut, fileNameAsTitle ? Path.GetFileNameWithoutExtension(path) : "");
     }
 
     private static readonly string[] TitleKeys = ["title"], ArtistKeys = ["artist"], AlbumKeys = ["album"],
@@ -158,6 +162,17 @@ public sealed class AudioEncoder(ToolManager tools)
         if (result.ExitCode == 0 && File.Exists(cover)) return cover;
         AppLog.Warn($"Could not read the cover of {Path.GetFileName(path)}: {result.ErrorSummary}");
         return null;
+    }
+
+    /// <summary>
+    /// Writes a saved file to <paramref name="output"/> with <paramref name="plan"/> (copied or re-encoded) and
+    /// <paramref name="tags"/>, keeping its other tags (<paramref name="current"/>) and its cover as they are.
+    /// </summary>
+    public async Task RewriteAsync(
+        string path, string output, OutputPlan plan, FileTags current, TrackTags tags, string workDir, CancellationToken ct)
+    {
+        var cover = current.HasCover && plan.Cover != CoverEmbedding.None ? await TryExtractCoverAsync(path, workDir, ct) : null;
+        await EncodeAsync(path, output, plan, tags, cover, workDir, ct, keptTags: current.Other);
     }
 
     /// <param name="keptTags">

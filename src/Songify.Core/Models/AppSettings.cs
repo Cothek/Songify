@@ -45,6 +45,21 @@ public sealed class AppSettings
 
     public DateTimeOffset? LastToolUpdateCheck { get; set; }
 
+    /// <summary>Volume levelling: the folder last levelled (null: the save folder) and whether its subfolders count.</summary>
+    public string? LevelFolder { get; set; }
+    public bool LevelIncludeSubfolders { get; set; } = true;
+
+    /// <summary>Save levelled copies (in <see cref="LevelCopiesFolder"/>) instead of changing the files themselves.</summary>
+    public bool LevelSaveCopies { get; set; } = true;
+
+    /// <summary>Null: "&lt;folder&gt; (levelled)" next to the levelled folder.</summary>
+    public string? LevelCopiesFolder { get; set; }
+
+    /// <summary>The loudness songs are brought to, in LUFS.</summary>
+    public double LevelTargetLufs { get; set; } = DefaultLevelTarget;
+
+    public const double DefaultLevelTarget = -14;
+
     /// <summary>
     /// Resets values a hand-edited file can make invalid (enums also load from bare numbers).
     /// Returns this for chaining after load.
@@ -55,6 +70,7 @@ public sealed class AppSettings
         if (!Enum.IsDefined(Format)) Format = defaults.Format;
         if (!Enum.IsDefined(Theme)) Theme = defaults.Theme;
         if (SpotifyIdleMinutes < 1) SpotifyIdleMinutes = defaults.SpotifyIdleMinutes;
+        if (LevelTargetLufs is < -30 or > -5 || double.IsNaN(LevelTargetLufs)) LevelTargetLufs = DefaultLevelTarget;
         return this;
     }
 

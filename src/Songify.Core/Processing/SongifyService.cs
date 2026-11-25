@@ -25,6 +25,7 @@ public sealed class SongifyService : IAsyncDisposable
     private readonly ToolManager _tools;
     private readonly YtDlpClient _ytDlp;
     private readonly TrackProcessor _processor;
+    private readonly VolumeLeveller _leveller;
 
     private readonly object _gate = new();          // guards _tracks, _byId, _enqueued, _running
     private readonly object _settingsGate = new();  // guards settings read-modify-write and its file
@@ -67,8 +68,10 @@ public sealed class SongifyService : IAsyncDisposable
         Updater = new AppUpdater(_http, paths.LocalDir);
         _tools = new ToolManager(paths.ToolsDir, _http);
         _ytDlp = new YtDlpClient(_tools);
+        var encoder = new AudioEncoder(_tools);
         _processor = new TrackProcessor(_ytDlp, new YouTubeMusicClient(_http), new SpotifyTrackResolver(_http), spotifyRecorder,
-            new AudioEncoder(_tools), _http, paths.WorkDir);
+            encoder, _http, paths.WorkDir);
+        _leveller = new VolumeLeveller(encoder, _tools, paths.WorkDir);
 
         _settings = (JsonFile.Load<AppSettings>(paths.SettingsFile) ?? new AppSettings()).Sanitize();
         _tracks = (JsonFile.Load<List<TrackRecord>>(paths.LibraryFile) ?? [])
@@ -169,6 +172,17 @@ public sealed class SongifyService : IAsyncDisposable
     {
         EnsureToolsReady();
         return _processor.EditAsync(track, tags, _settings, _cts.Token);
+    }
+
+    /// <summary>
+    /// Measures and changes the volume of audio files (any folder, not just Songify's). Not while an update waits to
+    /// restart: like new songs, levelling waits until after it.
+    /// </summary>
+    public VolumeLeveller GetLeveller()
+    {
+        EnsureToolsReady();
+        if (IsHeld) throw new InvalidOperationException("Songify is about to restart for an update. Try again after it.");
+        return _leveller;
     }
 
     /// <summary>

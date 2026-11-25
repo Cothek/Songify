@@ -52,6 +52,16 @@ public sealed class PercentConverter : IValueConverter
         throw new NotSupportedException();
 }
 
+/// <summary>Binds the second of two RadioButtons to the same bool as the first.</summary>
+public sealed class InverseBool : IValueConverter
+{
+    public static readonly InverseBool Instance = new();
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value is not true;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => value is not true;
+}
+
 /// <summary>Binds a RadioButton's IsChecked to "enum property equals ConverterParameter".</summary>
 public sealed class EnumMatch : IValueConverter
 {
