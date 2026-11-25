@@ -1,4 +1,5 @@
-﻿using System.Windows.Controls;
+﻿using System.Windows.Automation.Peers;
+using System.Windows.Controls;
 using System.Windows.Input;
 using Songify.Core.Models;
 using Wpf.Ui.Controls;
@@ -12,7 +13,25 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         DataContext = viewModel;
         viewModel.EditRequested += editor => new EditSongWindow(editor) { Owner = this }.ShowDialog();
+        viewModel.Update.PropertyChanged += OnUpdateChanged;
+        Loaded += (_, _) =>
+        {
+            if (ViewModel.Update.IsVisible) AnnounceUpdate(); // e.g. "didn't start", set before this window existed
+        };
     }
+
+    // Screen readers announce the update bar's message when the stage changes (not on every percent), and keyboard
+    // focus moves from the "Update" button, which disappears, to Cancel.
+    private void OnUpdateChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(UpdateViewModel.Stage)) AnnounceUpdate();
+    }
+
+    private void AnnounceUpdate() => Dispatcher.BeginInvoke(() =>
+    {
+        UIElementAutomationPeer.CreatePeerForElement(UpdateMessage)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        if (ViewModel.Update.Stage == UpdateStage.Downloading) CancelUpdateButton.Focus();
+    }, System.Windows.Threading.DispatcherPriority.Background);
 
     private MainViewModel ViewModel => (MainViewModel)DataContext;
 

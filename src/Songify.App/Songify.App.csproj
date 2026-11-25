@@ -21,7 +21,8 @@
     <!-- The download is Songify.exe; release builds set Version from the git tag (v1.2.3 → 1.2.3). -->
     <AssemblyName>Songify</AssemblyName>
     <Product>Songify</Product>
-    <Version>0.1.0</Version>
+    <!-- Local and CI builds are "dev" builds: they never offer to update themselves. -->
+    <Version>0.0.0-dev</Version>
   </PropertyGroup>
 
 </Project>

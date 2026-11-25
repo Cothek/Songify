@@ -36,6 +36,18 @@ How a recording works: Songify opens the song in Spotify, records only Spotify's
 2. Unzip it anywhere and run **Songify.exe**. Nothing else needs to be installed.
 3. Windows may say "Windows protected your PC", because the app isn't code-signed. Click **More info → Run anyway**.
 
+### Updates
+
+Songify checks GitHub for a new release twice a day (turn it off under **Updates** in the sidebar). When one is out, a bar offers **Update and restart**: Songify downloads the new `Songify.exe`, lets the songs it's saving finish (new ones wait) and closes; the new version then puts itself in place of the old `Songify.exe` and starts. Your settings, library and queue are kept. Nothing installs without your click. Pre-releases aren't offered, and builds made from source (version `0.0.0-dev`) never update.
+
+The update replaces `Songify.exe` in the folder it runs from, so that folder must be writable (not `Program Files` without admin rights, and not a temporary folder: unzip Songify before running it). Like the first download, updates aren't code-signed: Songify only accepts a download from this repository's GitHub releases, over HTTPS, matching the checksum GitHub lists for it.
+
+If the new version closes or hangs before showing its window (Songify waits up to two minutes), Songify puts the previous version back, restarts it, and doesn't offer that version again; the next one is offered as usual. If a new version breaks later, after it has started, download the previous one from [Releases](https://github.com/Cothek/Songify/releases).
+
+While an update runs you may see `Songify.exe.old`, `.new` or `.failed` next to `Songify.exe`; they're deleted when Songify next starts. `Songify.update-failed.json` remembers a version that didn't start and goes away once you're on that version or a newer one.
+
+`Songify.exe` is a single file that unpacks part of itself (about 8 MB) to `%TEMP%\.net\Songify` on first start, in a new folder for each version. Songify deletes the folders of earlier versions when it starts.
+
 ## Build from source
 
 Requires the .NET 10 SDK (use the `dotnet` command line or Visual Studio 2026; Visual Studio 2022 can't open .NET 10 projects).
@@ -77,7 +89,7 @@ A tag with a suffix, like `v0.2.0-beta.1`, is published as a pre-release, so the
 
 ## Layout
 
-- `src/Songify.Core` – everything but the UI: playlist polling and work queue (`Processing/`), title parsing and match scoring (`Matching/`), yt-dlp and YouTube Music clients (`YouTube/`), ffmpeg encoding and file naming (`Audio/`), tool downloads (`Tools/`).
+- `src/Songify.Core` – everything but the UI: playlist polling and work queue (`Processing/`), title parsing and match scoring (`Matching/`), yt-dlp and YouTube Music clients (`YouTube/`), ffmpeg encoding, tag editing and file naming (`Audio/`), tool downloads (`Tools/`), self-update from GitHub releases (`Updates/`).
 - `src/Songify.Core/Spotify` – Spotify song lookup (`SpotifyTrackResolver`), the recorder interface, and finding the song in a capture (`RecordingCutter`).
 - `src/Songify.Spotify` – the Windows-only recorder: per-app audio capture (NAudio), the Windows media session (what Spotify reports as playing), output mute and idle detection. Needs Windows 10 version 2004 or later.
 - `src/Songify.App` – WPF window (MVVM via CommunityToolkit.Mvvm). The look comes from [WPF UI](https://github.com/lepoco/wpfui) (Windows 11 Fluent): use its theme brushes (`TextFillColorPrimaryBrush`, `SystemFillColorCriticalBrush`, …) via `DynamicResource` so colors follow the light/dark setting (Appearance → Theme; "Match Windows" by default). App-specific styles are in `App.xaml`.

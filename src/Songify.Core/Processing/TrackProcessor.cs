@@ -74,8 +74,10 @@ public sealed class TrackProcessor(
     /// Falls back to the video's audio if Spotify can't play or record the song. Returns when to try again
     /// if Spotify played something else (e.g. the Free daily limit); the caller re-queues the job then, so one
     /// such song doesn't hold up the others. <paramref name="settings"/> is read live: a job may wait for days.
+    /// While <paramref name="held"/> is true (an update waits to restart), a recording doesn't start.
     /// </summary>
-    public async Task<DateTimeOffset?> RecordAsync(SpotifyJob job, Func<AppSettings> settings, CancellationToken ct)
+    public async Task<DateTimeOffset?> RecordAsync(
+        SpotifyJob job, Func<AppSettings> settings, CancellationToken ct, Func<bool>? held = null)
     {
         var track = job.Track;
         if (!settings().RecordFromSpotify || spotifyRecorder is null)
@@ -90,7 +92,8 @@ public sealed class TrackProcessor(
         {
             var options = new RecordingOptions(
                 () => settings() is { SpotifyOnlyWhenIdle: true } s ? TimeSpan.FromMinutes(s.SpotifyIdleMinutes) : null,
-                () => settings().RecordFromSpotify);
+                () => settings().RecordFromSpotify,
+                held ?? (() => false));
             void OnPhase(RecordingPhase phase)
             {
                 track.Status = phase == RecordingPhase.Recording ? TrackStatus.Recording : TrackStatus.WaitingToRecord;
@@ -141,6 +144,12 @@ public sealed class TrackProcessor(
 
     /// <summary>Video IDs being edited: a second save of the same song would race the first one's file moves.</summary>
     private readonly HashSet<string> _editing = [];
+
+    /// <summary>A song's tags are being saved (an update must not restart Songify now).</summary>
+    public bool IsEditing
+    {
+        get { lock (_editing) return _editing.Count > 0; }
+    }
 
     /// <summary>
     /// Writes new tags into a saved song's file (the audio is copied, not re-encoded; other tags and the cover are

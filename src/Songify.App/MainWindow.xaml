@@ -230,6 +230,11 @@
                 <ComboBox ItemsSource="{Binding ThemeOptions}" DisplayMemberPath="Label"
                           SelectedValuePath="Value" SelectedValue="{Binding Theme}"
                           AutomationProperties.Name="Theme" />
+
+                <TextBlock Text="Updates" Style="{StaticResource SectionHeading}" Margin="0,24,0,8" />
+                <CheckBox Content="Check for new versions" IsChecked="{Binding CheckForUpdates}"
+                          IsEnabled="{Binding Update.IsReleaseBuild}" />
+                <TextBlock Style="{StaticResource Hint}" Text="{Binding Update.VersionText}" />
             </StackPanel>
         </ScrollViewer>
 
@@ -244,32 +249,77 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <Grid Margin="0,0,0,8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Orientation="Horizontal">
-                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
-                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.All}}"
-                                     Content="{Binding TotalCount}" ContentStringFormat="All {0}" />
-                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
-                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Review}}"
-                                     Content="{Binding ReviewCount}" ContentStringFormat="To check {0}" />
-                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
-                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Failed}}"
-                                     Content="{Binding FailedCount}" ContentStringFormat="Failed {0}" />
-                        <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
-                                     IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Pending}}"
-                                     Content="{Binding PendingCount}" ContentStringFormat="In progress {0}" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal">
-                        <ui:Button Content="Check playlists now" Margin="0,0,8,0" Command="{Binding CheckNowCommand}" />
-                        <ui:Button Content="Try again" Command="{Binding RetrySelectedCommand}"
-                                   ToolTip="Process the selected failed songs again" />
-                        <ui:Button Content="Open save folder" Margin="8,0,0,0" Command="{Binding OpenOutputFolderCommand}" />
-                    </StackPanel>
-                </Grid>
+                <StackPanel>
+                    <!-- Update bar: shown when a newer release is on GitHub; installs only on click.
+                         Stage changes are announced to screen readers from code-behind (UpdateMessage). -->
+                    <Border DataContext="{Binding Update}" Margin="0,0,0,12" Padding="16,12"
+                            CornerRadius="{DynamicResource ControlCornerRadius}" BorderThickness="1"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{DynamicResource SystemFillColorAttentionBackgroundBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                <TextBlock x:Name="UpdateMessage" Text="{Binding Message}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           AutomationProperties.LiveSetting="Polite" />
+                                <ProgressBar Value="{Binding Progress, Mode=OneWay}" Maximum="1" Margin="0,8,0,0"
+                                             HorizontalAlignment="Left" Width="360"
+                                             Visibility="{Binding ShowProgress, Converter={StaticResource BoolToVisibility}}"
+                                             AutomationProperties.Name="Download progress" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <ui:Button Content="Update and restart" Appearance="Primary" Command="{Binding InstallCommand}"
+                                           Visibility="{Binding CanInstall, Converter={StaticResource BoolToVisibility}}" />
+                                <ui:Button x:Name="CancelUpdateButton" Content="Cancel" Command="{Binding CancelCommand}"
+                                           Visibility="{Binding CanCancel, Converter={StaticResource BoolToVisibility}}" />
+                                <ui:Button Content="{Binding ReleasePageLabel}" Margin="8,0,0,0" Command="{Binding OpenReleasePageCommand}" />
+                                <ui:Button Content="{Binding DismissLabel}" Margin="8,0,0,0" Appearance="Transparent" Command="{Binding DismissCommand}"
+                                           Visibility="{Binding CanDismiss, Converter={StaticResource BoolToVisibility}}" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                         IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.All}}"
+                                         Content="{Binding TotalCount}" ContentStringFormat="All {0}" />
+                            <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                         IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Review}}"
+                                         Content="{Binding ReviewCount}" ContentStringFormat="To check {0}" />
+                            <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                         IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Failed}}"
+                                         Content="{Binding FailedCount}" ContentStringFormat="Failed {0}" />
+                            <RadioButton Style="{StaticResource FilterTab}" GroupName="Filter"
+                                         IsChecked="{Binding Filter, Converter={x:Static local:EnumMatch.Instance}, ConverterParameter={x:Static local:TrackFilter.Pending}}"
+                                         Content="{Binding PendingCount}" ContentStringFormat="In progress {0}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <ui:Button Content="Check playlists now" Margin="0,0,8,0" Command="{Binding CheckNowCommand}" />
+                            <ui:Button Content="Try again" Command="{Binding RetrySelectedCommand}"
+                                       ToolTip="Process the selected failed songs again" />
+                            <ui:Button Content="Open save folder" Margin="8,0,0,0" Command="{Binding OpenOutputFolderCommand}" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
 
                 <DataGrid x:Name="TrackGrid" Grid.Row="1" ItemsSource="{Binding TracksView}"
                           AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"

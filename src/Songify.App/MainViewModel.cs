@@ -65,6 +65,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _spotifyOnlyWhenIdle;
     [ObservableProperty] private int _spotifyIdleMinutes;
     [ObservableProperty] private AppTheme _theme;
+    [ObservableProperty] private bool _checkForUpdates;
     [ObservableProperty] private string _statusText = "Starting…";
     [ObservableProperty] private TrackFilter _filter = TrackFilter.All;
     [ObservableProperty] private int _totalCount;
@@ -94,11 +95,18 @@ public sealed partial class MainViewModel : ObservableObject
     public bool HasNoPlaylists => Playlists.Count == 0;
     public bool HasNoTracks => Tracks.Count == 0;
 
-    public MainViewModel(SongifyService service, ThemeSwitcher themes, Dispatcher dispatcher)
+    public UpdateViewModel Update { get; }
+    /// <param name="exitForUpdate">Closes Songify once the downloaded update has taken over (see UpdateViewModel).</param>
+    public MainViewModel(SongifyService service, ThemeSwitcher themes, Dispatcher dispatcher, Action exitForUpdate)
     {
         _service = service;
         _themes = themes;
         _dispatcher = dispatcher;
+        Update = new UpdateViewModel(service, exitForUpdate, dispatcher);
+        Update.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(UpdateViewModel.Stage)) EditSongCommand.NotifyCanExecuteChanged();
+        };
 
         _loading = true;
         var s = service.Settings;
@@ -114,6 +122,7 @@ public sealed partial class MainViewModel : ObservableObject
         // A hand-edited value outside the list would leave the box blank: show the nearest choice.
         SpotifyIdleMinutes = IdleMinuteOptions.MinBy(m => Math.Abs(m - s.SpotifyIdleMinutes));
         Theme = s.Theme;
+        CheckForUpdates = s.CheckForUpdates;
         foreach (var url in s.Playlists) Playlists.Add(url);
         _loading = false;
 
@@ -202,6 +211,13 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnRecordFromSpotifyChanged(bool value) => PushSettings();
     partial void OnSpotifyOnlyWhenIdleChanged(bool value) => PushSettings();
     partial void OnSpotifyIdleMinutesChanged(int value) => PushSettings();
+    partial void OnCheckForUpdatesChanged(bool value)
+    {
+        PushSettings();
+        if (_loading) return;
+        if (value) _ = Update.CheckAsync();
+        else Update.Hide();
+    }
 
     partial void OnThemeChanged(AppTheme value)
     {
@@ -236,6 +252,7 @@ public sealed partial class MainViewModel : ObservableObject
             s.SpotifyOnlyWhenIdle = SpotifyOnlyWhenIdle;
             s.SpotifyIdleMinutes = SpotifyIdleMinutes;
             s.Theme = Theme;
+            s.CheckForUpdates = CheckForUpdates;
             s.Playlists = [.. Playlists];
         });
     }
@@ -288,7 +305,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void OpenOutputFolder()
     {
         Directory.CreateDirectory(OutputFolder);
-        Open(OutputFolder);
+        Shell.Open(OutputFolder);
     }
 
     // Failed only: re-running a saved track would leave its old file behind as a "(2)" duplicate.
@@ -303,7 +320,9 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Asks the window to show the "Edit song" dialog.</summary>
     public event Action<EditSongViewModel>? EditRequested;
 
-    private static bool CanEditSong(TrackRecord? track) => track is { Status: TrackStatus.Done, FilePath: not null };
+    // Not while Songify is closing for an update: closing would throw away the editor's changes.
+    private bool CanEditSong(TrackRecord? track) =>
+        track is { Status: TrackStatus.Done, FilePath: not null } && Update.Stage != UpdateStage.Restarting;
 
     [RelayCommand(CanExecute = nameof(CanEditSong))]
     private void EditSong(TrackRecord? track)
@@ -329,15 +348,12 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void OpenOriginalVideo(TrackRecord? track)
     {
-        if (track is not null) Open(YouTubeUrls.Video(track.VideoId));
+        if (track is not null) Shell.Open(YouTubeUrls.Video(track.VideoId));
     }
 
     [RelayCommand]
     private void OpenSavedSource(TrackRecord? track)
     {
-        if (track?.MatchedVideoId is { } id) Open(YouTubeUrls.For(track.Source, id));
+        if (track?.MatchedVideoId is { } id) Shell.Open(YouTubeUrls.For(track.Source, id));
     }
-
-    private static void Open(string target) =>
-        Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
 }

@@ -21,7 +21,8 @@ public enum RecordingPhase
 /// a recording the user interrupts is discarded and retried. Null: record right away.
 /// </param>
 /// <param name="StillWanted">False once the user turned Spotify recording off: the recorder gives up (<see cref="SpotifyFailure.TurnedOff"/>).</param>
-public sealed record RecordingOptions(Func<TimeSpan?> RequiredIdle, Func<bool> StillWanted);
+/// <param name="Held">True while an update waits to restart Songify: don't start recording (keep waiting).</param>
+public sealed record RecordingOptions(Func<TimeSpan?> RequiredIdle, Func<bool> StillWanted, Func<bool> Held);
 
 public enum SpotifyFailure
 {

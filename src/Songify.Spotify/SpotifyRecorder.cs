@@ -68,7 +68,7 @@ public sealed class SpotifyRecorder : ISpotifyRecorder
         {
             if (!options.StillWanted())
                 throw new SpotifyRecordingException(SpotifyFailure.TurnedOff, "Recording from Spotify was turned off.");
-            if (options.RequiredIdle() is not { } idle || UserActivity.IsAway(idle)) return;
+            if (!options.Held() && (options.RequiredIdle() is not { } idle || UserActivity.IsAway(idle))) return;
             if (first) phase(RecordingPhase.WaitingForIdle);
             await Task.Delay(IdlePoll, ct);
         }

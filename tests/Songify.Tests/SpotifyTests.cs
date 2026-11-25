@@ -196,11 +196,13 @@ public sealed class SpotifyRecordingFlowTests : IDisposable
     private sealed class FakeRecorder(Func<Exception?> next) : ISpotifyRecorder
     {
         public int Calls { get; private set; }
+        public RecordingOptions? LastOptions { get; private set; }
         public void RecoverFromCrash() { }
         public Task<string> RecordAsync(SpotifyTrack track, RecordingOptions options, string workDir,
             Action<RecordingPhase> phase, CancellationToken ct)
         {
             Calls++;
+            LastOptions = options;
             phase(RecordingPhase.Recording);
             throw next() ?? new InvalidOperationException("no recording in tests");
         }
@@ -270,6 +272,19 @@ public sealed class SpotifyRecordingFlowTests : IDisposable
         Assert.Equal(0, recorder.Calls);
         Assert.Equal(TrackStatus.Failed, track.Status);
         Assert.Equal("No YouTube Music results. Saving the video's audio is turned off.", track.Note);
+    }
+
+    [Fact]
+    public async Task The_recorder_is_told_when_an_update_holds_new_recordings()
+    {
+        var recorder = new FakeRecorder(() => null);
+        var held = true;
+
+        await Processor(recorder).RecordAsync(Job().Job, () => Settings, CancellationToken.None, () => held);
+
+        Assert.True(recorder.LastOptions!.Held());
+        held = false;
+        Assert.False(recorder.LastOptions.Held()); // read live while the recorder waits
     }
 
     public void Dispose()

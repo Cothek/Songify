@@ -1,8 +1,7 @@
-﻿using System.Security.Cryptography;
-using System.Text;
-using System.Windows;
+﻿using System.Windows;
 using Songify.Core.Infrastructure;
 using Songify.Core.Processing;
+using Songify.Core.Updates;
 using Songify.Spotify;
 
 namespace Songify.App;
@@ -32,14 +31,33 @@ public partial class App : Application
 
         var paths = AppPaths.Default();
 
-        // Two instances would share the library and download every song twice.
-        _singleInstance = new Mutex(true, $@"Local\Songify-{Hash(paths.DataDir)}", out var isFirst);
-        if (!isFirst)
+        // Started by the old version to install this one (see UpdateHandoff): no window, and it always exits.
+        if (UpdateHandoff.InstallTarget(e.Args) is not null)
         {
+            AppLog.FilePath = paths.LogFile;
+            try
+            {
+                if (UpdateHandoff.Install(e.Args, AppUpdater.CurrentVersion(), paths.SingleInstanceMutexName) is { } problem)
+                    ShowError(problem);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("The update failed", ex);
+                ShowError($"The update failed: {ex.Message}");
+            }
+            finally
+            {
+                Shutdown();
+            }
+            return;
+        }
+
+        _singleInstance = InstanceLock.TryAcquire(paths.SingleInstanceMutexName);
+        if (_singleInstance is null)
+        {
+            UpdateHandoff.ConfirmStarted(e.Args); // this version runs; another Songify was started meanwhile
             MessageBox.Show("Songify is already running. Look for it in the taskbar.", "Songify",
                 MessageBoxButton.OK, MessageBoxImage.Information);
-            _singleInstance.Dispose();
-            _singleInstance = null;
             Shutdown();
             return;
         }
@@ -49,8 +67,15 @@ public partial class App : Application
             _service = new SongifyService(paths, new SpotifyRecorder(paths.LocalDir));
             _themes = new ThemeSwitcher();
             _themes.Apply(_service.Settings.Theme); // before the window exists, so it never flashes the wrong theme
-            var window = new MainWindow(new MainViewModel(_service, _themes, Dispatcher));
+            var window = new MainWindow(new MainViewModel(_service, _themes, Dispatcher, () => Shutdown()));
             MainWindow = window;
+            // After an update: tells the installer this version works (it rolls back otherwise).
+            void Confirm(object? sender, EventArgs args)
+            {
+                window.ContentRendered -= Confirm;
+                UpdateHandoff.ConfirmStarted(e.Args);
+            }
+            window.ContentRendered += Confirm;
             window.Show();
         }
         catch (Exception ex)
@@ -66,17 +91,15 @@ public partial class App : Application
         _ = Task.Run(_service.StartAsync);
     }
 
+    private static void ShowError(string message) => MessageBox.Show(message, "Songify", MessageBoxButton.OK, MessageBoxImage.Error);
+
     protected override void OnExit(ExitEventArgs e)
     {
         _themes?.Dispose();
         // Run off the UI thread so awaits inside DisposeAsync can't deadlock on the dispatcher.
         if (_service is not null)
             Task.Run(() => _service.DisposeAsync().AsTask()).GetAwaiter().GetResult();
-        _singleInstance?.ReleaseMutex();
-        _singleInstance?.Dispose();
+        if (_singleInstance is not null) InstanceLock.Release(_singleInstance);
         base.OnExit(e);
     }
-
-    private static string Hash(string text) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToUpperInvariant())))[..16];
 }

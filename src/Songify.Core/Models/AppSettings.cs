@@ -40,6 +40,9 @@ public sealed class AppSettings
 
     public AppTheme Theme { get; set; } = AppTheme.System;
 
+    /// <summary>Ask GitHub for a newer Songify twice a day; installing always waits for the user's click.</summary>
+    public bool CheckForUpdates { get; set; } = true;
+
     public DateTimeOffset? LastToolUpdateCheck { get; set; }
 
     /// <summary>

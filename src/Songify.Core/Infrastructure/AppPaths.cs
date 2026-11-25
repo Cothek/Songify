@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Songify.Core.Infrastructure;
 
 public sealed class AppPaths
@@ -10,6 +13,13 @@ public sealed class AppPaths
     public string SettingsFile => Path.Combine(DataDir, "settings.json");
     public string LibraryFile => Path.Combine(DataDir, "library.json");
     public string LogFile => Path.Combine(DataDir, "songify.log");
+
+    /// <summary>
+    /// Held by the running Songify for this data folder: two instances would share the library and download every
+    /// song twice. An update's installer takes it too, so it never replaces an exe that is running.
+    /// </summary>
+    public string SingleInstanceMutexName =>
+        $@"Local\Songify-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(DataDir.ToUpperInvariant())))[..16]}";
 
     public AppPaths(string dataDir, string localDir)
     {

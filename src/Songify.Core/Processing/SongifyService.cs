@@ -5,6 +5,7 @@ using Songify.Core.Infrastructure;
 using Songify.Core.Models;
 using Songify.Core.Spotify;
 using Songify.Core.Tools;
+using Songify.Core.Updates;
 using Songify.Core.YouTube;
 
 namespace Songify.Core.Processing;
@@ -45,6 +46,10 @@ public sealed class SongifyService : IAsyncDisposable
     public event Action<string>? StatusChanged;
 
     public AppSettings Settings => _settings;
+    public AppUpdater Updater { get; }
+
+    /// <summary>Set while an update waits for work to finish: workers don't start new songs.</summary>
+    private volatile TaskCompletionSource? _hold;
     private volatile bool _toolsReady; // set by StartAsync on a background thread, read from the UI
     public bool ToolsReady { get => _toolsReady; private set => _toolsReady = value; }
 
@@ -59,6 +64,7 @@ public sealed class SongifyService : IAsyncDisposable
         _http.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36");
         spotifyRecorder?.RecoverFromCrash(); // after logging is set up
+        Updater = new AppUpdater(_http, paths.LocalDir);
         _tools = new ToolManager(paths.ToolsDir, _http);
         _ytDlp = new YtDlpClient(_tools);
         _processor = new TrackProcessor(_ytDlp, new YouTubeMusicClient(_http), new SpotifyTrackResolver(_http), spotifyRecorder,
@@ -164,6 +170,36 @@ public sealed class SongifyService : IAsyncDisposable
         EnsureToolsReady();
         return _processor.EditAsync(track, tags, _settings, _cts.Token);
     }
+
+    /// <summary>
+    /// Stops starting new songs (queued ones stay queued, also across a restart) and waits until no song is being
+    /// matched, downloaded, converted, recorded or having its tags edited. Reports how many still are. A recording
+    /// that is still waiting for the PC to be idle doesn't count: while held it won't start, and after a restart
+    /// it simply starts over.
+    /// </summary>
+    public async Task HoldAndWaitUntilIdleAsync(IProgress<int>? busy, CancellationToken ct)
+    {
+        _hold ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Idle twice in a row: a worker or the recorder that checked the hold just before it was set has had
+        // time to show up as busy.
+        for (var idleChecks = 0; idleChecks < 2;)
+        {
+            var count = GetTracks().Count(t => t.Status is TrackStatus.Matching or TrackStatus.Downloading
+                or TrackStatus.Encoding or TrackStatus.Recording) + (_processor.IsEditing ? 1 : 0);
+            busy?.Report(count);
+            idleChecks = count == 0 ? idleChecks + 1 : 0;
+            await Task.Delay(IdlePoll, ct);
+        }
+    }
+
+    private static readonly TimeSpan IdlePoll = TimeSpan.FromMilliseconds(500);
+
+    private bool IsHeld => _hold is not null;
+
+    /// <summary>Undoes <see cref="HoldAndWaitUntilIdleAsync"/> (the update was cancelled or failed).</summary>
+    public void ResumeWork() => Interlocked.Exchange(ref _hold, null)?.TrySetResult();
+
+    private Task WaitWhileHeldAsync(CancellationToken ct) => _hold is { } hold ? hold.Task.WaitAsync(ct) : Task.CompletedTask;
 
     private void EnsureToolsReady()
     {
@@ -274,6 +310,7 @@ public sealed class SongifyService : IAsyncDisposable
         {
             await foreach (var track in _queue.Reader.ReadAllAsync(ct))
             {
+                await WaitWhileHeldAsync(ct);
                 lock (_gate) _enqueued.Remove(track.VideoId);
                 if (!track.TryClaim()) continue; // already handled or no longer queued
                 var job = await RunAsync(track, () => _processor.ProcessAsync(track, _settings, ct), ct);
@@ -290,7 +327,8 @@ public sealed class SongifyService : IAsyncDisposable
         {
             await foreach (var job in _recordings.Reader.ReadAllAsync(ct))
             {
-                var retryAt = await RunAsync(job.Track, () => _processor.RecordAsync(job, () => _settings, ct), ct);
+                await WaitWhileHeldAsync(ct);
+                var retryAt = await RunAsync(job.Track, () => _processor.RecordAsync(job, () => _settings, ct, () => IsHeld), ct);
                 if (retryAt is { } at) _ = RequeueAtAsync(job, at, ct);
             }
         }

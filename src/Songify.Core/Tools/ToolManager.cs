@@ -42,32 +42,9 @@ public sealed class ToolManager(string toolsDir, HttpClient http)
     private async Task DownloadFileAsync(string url, string destination, string label, IProgress<string>? progress, CancellationToken ct)
     {
         AppLog.Info($"Downloading {label} from {url}");
-        var partial = destination + ".download";
-        using (var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct))
-        {
-            response.EnsureSuccessStatusCode();
-            var total = response.Content.Headers.ContentLength;
-            await using var source = await response.Content.ReadAsStreamAsync(ct);
-            await using var target = File.Create(partial);
-            var buffer = new byte[81920];
-            long done = 0;
-            var lastPercent = -1;
-            int read;
-            while ((read = await source.ReadAsync(buffer, ct)) > 0)
-            {
-                await target.WriteAsync(buffer.AsMemory(0, read), ct);
-                done += read;
-                var percent = total > 0 ? (int)(done * 100 / total.Value) : -1;
-                if (percent != lastPercent)
-                {
-                    lastPercent = percent;
-                    progress?.Report(percent >= 0
-                        ? $"Downloading {label}… {percent}%"
-                        : $"Downloading {label}… {done / 1_048_576} MB");
-                }
-            }
-        }
-        File.Move(partial, destination, overwrite: true);
+        await HttpDownload.ToFileAsync(http, url, destination, (done, total) => progress?.Report(total > 0
+            ? $"Downloading {label}… {done * 100 / total.Value}%"
+            : $"Downloading {label}… {done / 1_048_576} MB"), ct);
     }
 
     private async Task DownloadFromZipAsync(string url, string[] entryNames, string label, IProgress<string>? progress, CancellationToken ct)

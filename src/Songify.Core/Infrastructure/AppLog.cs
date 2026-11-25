@@ -26,7 +26,9 @@ public static class AppLog
                 {
                     var text = $"{DateTime.Now:yyyy-MM-dd} {line}{Environment.NewLine}";
                     if (ex is not null) text += ex + Environment.NewLine;
-                    File.AppendAllText(FilePath, text);
+                    // Shared: during an update two Songify processes write here at once.
+                    using var file = new FileStream(FilePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                    file.Write(System.Text.Encoding.UTF8.GetBytes(text));
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 {
